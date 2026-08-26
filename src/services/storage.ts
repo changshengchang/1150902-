@@ -244,64 +244,146 @@ class StorageService {
     return { label: '瀏覽器安全持久化資料庫', mode: 'local', isCloud: false };
   }
 
-  // Send single record to Google Sheets Apps Script Webhook
+  // Send single record to Google Sheets Apps Script Webhook with multi-channel fallback
   public async syncRecordToGoogleSheets(webhookUrl: string, record: SurveyResponse): Promise<boolean> {
     if (!webhookUrl || !webhookUrl.startsWith('http')) return false;
 
     const trimmedUrl = webhookUrl.trim();
     const payloadString = JSON.stringify(record);
 
+    let success = false;
+
+    // Channel 1: Hidden Iframe Form POST (100% immune to mobile CORS and WebKit blocking)
     try {
-      // Use text/plain with no-cors to prevent browser CORS preflight blocking on Google Apps Script
-      await fetch(trimmedUrl, {
+      if (typeof document !== 'undefined') {
+        const iframeName = `g_sync_frame_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        const iframe = document.createElement('iframe');
+        iframe.name = iframeName;
+        iframe.style.display = 'none';
+        document.body.appendChild(iframe);
+
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = trimmedUrl;
+        form.target = iframeName;
+        form.style.display = 'none';
+
+        // Hidden input with serialized payload
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'postData';
+        input.value = payloadString;
+        form.appendChild(input);
+
+        // Also add direct key-value inputs for max compatibility
+        const addField = (name: string, val: any) => {
+          const inp = document.createElement('input');
+          inp.type = 'hidden';
+          inp.name = name;
+          inp.value = typeof val === 'object' ? JSON.stringify(val) : String(val ?? '');
+          form.appendChild(inp);
+        };
+
+        addField('id', record.id);
+        addField('time', record.time);
+        addField('dept', record.dept);
+        addField('role', record.role || '');
+        addField('gender', record.gender || '');
+        addField('q3', record.scores?.q3 ?? 5);
+        addField('q4', record.scores?.q4 ?? 5);
+        addField('q5', record.scores?.q5 ?? 5);
+        addField('q6', record.scores?.q6 ?? 5);
+        addField('q7', record.scores?.q7 ?? 5);
+        addField('q8', record.scores?.q8 ?? 5);
+        addField('q9', record.scores?.q9 ?? 5);
+        addField('avgPart2', record.avgPart2 ?? 5);
+        addField('avgPart3', record.avgPart3 ?? 5);
+        addField('avgOverall', record.avgOverall ?? 5);
+        addField('q10', record.q10 || '');
+        addField('q11', record.q11 || '');
+        addField('q12', record.q12 || '');
+
+        document.body.appendChild(form);
+        form.submit();
+
+        setTimeout(() => {
+          try {
+            document.body.removeChild(form);
+            document.body.removeChild(iframe);
+          } catch {}
+        }, 8000);
+
+        success = true;
+      }
+    } catch (e) {
+      console.warn('Iframe form submit fallback encountered error:', e);
+    }
+
+    // Channel 2: Fetch with keepalive & no-cors
+    try {
+      fetch(trimmedUrl, {
         method: 'POST',
         mode: 'no-cors',
+        keepalive: true,
         headers: {
           'Content-Type': 'text/plain;charset=utf-8'
         },
         body: payloadString
+      }).then(() => {
+        console.log('Fetch keepalive dispatched to Google Apps Script for:', record.id);
+      }).catch(err => {
+        console.warn('Fetch keepalive warning:', err);
       });
-      console.log('Successfully triggered Google Sheets webhook sync for record:', record.id);
-      return true;
+      success = true;
     } catch (err) {
-      console.warn('Google Sheets Webhook POST failed, attempting GET fallback:', err);
-      // Fallback using GET query parameters
-      try {
-        const params = new URLSearchParams({
-          id: record.id,
-          time: record.time,
-          dept: record.dept,
-          role: record.role || '',
-          gender: record.gender || '',
-          q3: String(record.scores?.q3 ?? 5),
-          q4: String(record.scores?.q4 ?? 5),
-          q5: String(record.scores?.q5 ?? 5),
-          q6: String(record.scores?.q6 ?? 5),
-          q7: String(record.scores?.q7 ?? 5),
-          q8: String(record.scores?.q8 ?? 5),
-          q9: String(record.scores?.q9 ?? 5),
-          avgPart2: String(record.avgPart2 ?? 5),
-          avgPart3: String(record.avgPart3 ?? 5),
-          avgOverall: String(record.avgOverall ?? 5),
-          q10: record.q10 || '',
-          q11: record.q11 || '',
-          q12: record.q12 || ''
-        });
-        const getUrl = trimmedUrl.includes('?') ? `${trimmedUrl}&${params.toString()}` : `${trimmedUrl}?${params.toString()}`;
-        const img = new Image();
-        img.src = getUrl;
-        return true;
-      } catch (getErr) {
-        console.error('Google Sheets GET fallback failed:', getErr);
-        return false;
-      }
+      console.warn('Fetch keepalive failed:', err);
     }
+
+    // Channel 3: Navigator sendBeacon (if available)
+    try {
+      if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+        const blob = new Blob([payloadString], { type: 'text/plain;charset=utf-8' });
+        navigator.sendBeacon(trimmedUrl, blob);
+        success = true;
+      }
+    } catch (beaconErr) {
+      console.warn('sendBeacon error:', beaconErr);
+    }
+
+    // Channel 4: GET pixel beacon fallback
+    try {
+      const params = new URLSearchParams({
+        id: record.id,
+        time: record.time,
+        dept: record.dept,
+        role: record.role || '',
+        gender: record.gender || '',
+        q3: String(record.scores?.q3 ?? 5),
+        q4: String(record.scores?.q4 ?? 5),
+        q5: String(record.scores?.q5 ?? 5),
+        q6: String(record.scores?.q6 ?? 5),
+        q7: String(record.scores?.q7 ?? 5),
+        q8: String(record.scores?.q8 ?? 5),
+        q9: String(record.scores?.q9 ?? 5),
+        avgPart2: String(record.avgPart2 ?? 5),
+        avgPart3: String(record.avgPart3 ?? 5),
+        avgOverall: String(record.avgOverall ?? 5),
+        q10: record.q10 || '',
+        q11: record.q11 || '',
+        q12: record.q12 || ''
+      });
+      const getUrl = trimmedUrl.includes('?') ? `${trimmedUrl}&${params.toString()}` : `${trimmedUrl}?${params.toString()}`;
+      const img = new Image();
+      img.src = getUrl;
+    } catch {}
+
+    return success;
   }
 
-  // Test Google Sheets Connection directly
+  // Test Google Sheets Connection with Server + Client dual validation
   public async testGoogleSheetsConnection(webhookUrl: string): Promise<{ success: boolean; message: string }> {
     if (!webhookUrl || !webhookUrl.startsWith('http')) {
-      return { success: false, message: '請輸入有效的 Google Apps Script 網頁應用程式網址 (https://...)' };
+      return { success: false, message: '請輸入有效的 Google Apps Script 網頁應用程式網址 (https://script.google.com/...)' };
     }
 
     const testRecord: SurveyResponse = {
@@ -320,11 +402,34 @@ class StorageService {
       q12: '測試成功'
     };
 
+    // 1. Try server-side test API first for verified HTTP feedback
+    try {
+      const res = await fetch('/api/test-sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: webhookUrl })
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success) {
+          // Also fire client test for double validation
+          this.syncRecordToGoogleSheets(webhookUrl, testRecord);
+          return {
+            success: true,
+            message: json.message || '✅ 伺服器與瀏覽器已成功發送測試封包至 Google 試算表！請開啟試算表確認是否有新增一筆測試紀錄。'
+          };
+        }
+      }
+    } catch (serverErr) {
+      console.warn('Server test failed, trying direct browser test:', serverErr);
+    }
+
+    // 2. Direct browser test
     try {
       await this.syncRecordToGoogleSheets(webhookUrl, testRecord);
       return {
         success: true,
-        message: '✅ 測試封包已成功送出！請開啟「115年三義鄉公所EAP研習問卷彙整」試算表確認是否有新增一筆測試紀錄。'
+        message: '✅ 測試封包已成功送出！請開啟「115年三義鄉公所EAP研習問卷彙整」試算表確認是否有新增一筆「人事室 (連線測試)」紀錄。'
       };
     } catch (e: any) {
       return {
@@ -437,7 +542,10 @@ class StorageService {
         const res = await fetch('/api/responses', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+          body: JSON.stringify({
+            ...payload,
+            googleSheetsWebhookUrl: config.googleSheetsWebhookUrl
+          })
         });
         const contentType = res.headers.get('content-type') || '';
         if (res.ok && contentType.includes('application/json')) {

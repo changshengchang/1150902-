@@ -251,30 +251,63 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  // Optimized Google Apps Script Code matching the user's sheet name
-  const appsScriptTemplate = `// ==========================================
-// 苗栗縣三義鄉公所 115年度 EAP研習問卷 Google 試算表自動寫入程式
-// 試算表名稱：115年三義鄉公所EAP研習問卷彙整
-// ==========================================
+  // Highly Optimized & Error-Tolerant Google Apps Script Code matching the user's sheet name
+  const appsScriptTemplate = `// =========================================================================
+// 苗栗縣三義鄉公所 115年度 EAP研習問卷 Google 試算表自動寫入程式 (最新高相容版)
+// 目標試算表檔案名稱：115年三義鄉公所EAP研習問卷彙整
+// =========================================================================
 
 function doPost(e) {
+  return handleSurveyData(e);
+}
+
+function doGet(e) {
+  return handleSurveyData(e);
+}
+
+function handleSurveyData(e) {
+  var lock = LockService.getScriptLock();
   try {
+    // 取得鎖定防止多位同仁同時送出造成資料覆蓋 (最多等待 15 秒)
+    lock.waitLock(15000);
+
     var ss = SpreadsheetApp.getActiveSpreadsheet();
-    // 自動尋找名為「115年三義鄉公所EAP研習問卷彙整」的工作表，若無則抓取第一張工作表
-    var sheet = ss.getSheetByName("115年三義鄉公所EAP研習問卷彙整") || ss.getActiveSheet() || ss.getSheets()[0];
     
+    // 智慧定位工作表：優先尋找問卷彙整專用表，若無則抓取預設工作表1或第一張表
+    var sheet = ss.getSheetByName("115年三義鄉公所EAP研習問卷彙整") ||
+                ss.getSheetByName("工作表1") ||
+                ss.getSheetByName("問卷彙整") ||
+                ss.getSheetByName("Sheet1") ||
+                ss.getActiveSheet() ||
+                ss.getSheets()[0];
+    
+    // 解析傳入的問卷資料 (支援 JSON 字串、Form POST、URL 參數等多種傳輸通道)
     var data = {};
-    if (e && e.postData && e.postData.contents) {
-      try {
-        data = JSON.parse(e.postData.contents);
-      } catch (parseErr) {
-        data = e.parameter || {};
+    if (e) {
+      if (e.postData && e.postData.contents) {
+        try {
+          data = JSON.parse(e.postData.contents);
+        } catch (jsonErr) {
+          // 嘗試解碼 URI 內容
+          try {
+            data = JSON.parse(decodeURIComponent(e.postData.contents));
+          } catch (e2) {}
+        }
       }
-    } else if (e && e.parameter) {
-      data = e.parameter;
+      
+      if (!data.dept && e.parameter) {
+        if (e.parameter.postData) {
+          try {
+            data = JSON.parse(e.parameter.postData);
+          } catch (pErr) {}
+        }
+        if (!data.dept) {
+          data = e.parameter;
+        }
+      }
     }
     
-    // 如果試算表目前為空，自動建立公務標準表頭
+    // 若工作表全新無資料，自動建立綠色公務標準表頭
     if (sheet.getLastRow() === 0) {
       sheet.appendRow([
         '流水號', '填答時間', '服務單位', '身分別', '性別',
@@ -283,47 +316,66 @@ function doPost(e) {
         '第二部分課程均分', '第三部分講師均分', '全卷總平均滿意度',
         'Q10最大收穫或心得', 'Q11改進建議', 'Q12未來期待主題'
       ]);
-      // 格式化標題列顏色
+      
       var headerRange = sheet.getRange(1, 1, 1, 18);
-      headerRange.setBackground('#064e3b');
+      headerRange.setBackground('#064e3b'); // 三義公所墨綠色
       headerRange.setFontColor('#ffffff');
       headerRange.setFontWeight('bold');
+      headerRange.setHorizontalAlignment('center');
+      sheet.setFrozenRows(1);
     }
     
+    // 解析分數
     var scores = data.scores || {};
-    var q3 = scores.q3 !== undefined ? scores.q3 : (data.q3 || 5);
-    var q4 = scores.q4 !== undefined ? scores.q4 : (data.q4 || 5);
-    var q5 = scores.q5 !== undefined ? scores.q5 : (data.q5 || 5);
-    var q6 = scores.q6 !== undefined ? scores.q6 : (data.q6 || 5);
-    var q7 = scores.q7 !== undefined ? scores.q7 : (data.q7 || 5);
-    var q8 = scores.q8 !== undefined ? scores.q8 : (data.q8 || 5);
-    var q9 = scores.q9 !== undefined ? scores.q9 : (data.q9 || 5);
+    if (typeof scores === 'string') {
+      try { scores = JSON.parse(scores); } catch (e) { scores = {}; }
+    }
     
+    var q3 = Number(scores.q3 !== undefined ? scores.q3 : (data.q3 || 5));
+    var q4 = Number(scores.q4 !== undefined ? scores.q4 : (data.q4 || 5));
+    var q5 = Number(scores.q5 !== undefined ? scores.q5 : (data.q5 || 5));
+    var q6 = Number(scores.q6 !== undefined ? scores.q6 : (data.q6 || 5));
+    var q7 = Number(scores.q7 !== undefined ? scores.q7 : (data.q7 || 5));
+    var q8 = Number(scores.q8 !== undefined ? scores.q8 : (data.q8 || 5));
+    var q9 = Number(scores.q9 !== undefined ? scores.q9 : (data.q9 || 5));
+    
+    var avgPart2 = data.avgPart2 ? Number(data.avgPart2) : parseFloat(((q3 + q4 + q5 + q6) / 4).toFixed(2));
+    var avgPart3 = data.avgPart3 ? Number(data.avgPart3) : parseFloat(((q7 + q8 + q9) / 3).toFixed(2));
+    var avgOverall = data.avgOverall ? Number(data.avgOverall) : parseFloat(((q3 + q4 + q5 + q6 + q7 + q8 + q9) / 7).toFixed(2));
+    
+    var timeStr = data.time || Utilities.formatDate(new Date(), "GMT+8", "yyyy-MM-dd HH:mm:ss");
+    
+    // 寫入問卷新紀錄列
     sheet.appendRow([
       data.id || ('resp_' + new Date().getTime()),
-      data.time || Utilities.formatDate(new Date(), "GMT+8", "yyyy-MM-dd HH:mm:ss"),
+      timeStr,
       data.dept || '未指定課室',
       data.role || '非主管職員/公務員',
       data.gender || '未提供',
       q3, q4, q5, q6, q7, q8, q9,
-      data.avgPart2 || '',
-      data.avgPart3 || '',
-      data.avgOverall || '',
+      avgPart2,
+      avgPart3,
+      avgOverall,
       data.q10 || '（無特別填寫）',
       data.q11 || '（無特別填寫）',
       data.q12 || '（無特別填寫）'
     ]);
     
-    return ContentService.createTextOutput(JSON.stringify({ result: "success", status: 200 }))
+    SpreadsheetApp.flush();
+    
+    return ContentService
+      .createTextOutput(JSON.stringify({ result: "success", status: 200, message: "資料已成功寫入試算表！" }))
       .setMimeType(ContentService.MimeType.JSON);
+      
   } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({ result: "error", message: err.toString() }))
+    return ContentService
+      .createTextOutput(JSON.stringify({ result: "error", message: err.toString() }))
       .setMimeType(ContentService.MimeType.JSON);
+  } finally {
+    try {
+      lock.releaseLock();
+    } catch (e) {}
   }
-}
-
-function doGet(e) {
-  return doPost(e);
 }`;
 
   const handleCopyScript = () => {

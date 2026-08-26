@@ -41,6 +41,8 @@ export function getStoredCloudConfig(): CloudConfig {
     config.googleSheetsWebhookUrl = urlWebhook;
     config.mode = 'google_sheets';
     saveStoredCloudConfig(config);
+    // Also try to push to server if server is running
+    pushConfigToServer(config).catch(() => {});
   }
 
   return config;
@@ -52,6 +54,52 @@ export function saveStoredCloudConfig(config: CloudConfig): void {
   } catch (e) {
     console.error('Error saving cloud config:', e);
   }
+  // Sync to server backend
+  pushConfigToServer(config).catch(() => {});
+}
+
+async function pushConfigToServer(config: CloudConfig): Promise<void> {
+  try {
+    await fetch('/api/cloud-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config)
+    });
+  } catch {
+    // Silent catch if server is offline or static SPA
+  }
+}
+
+// Automatically fetch latest config from server on startup
+export async function initCloudConfigFromServer(): Promise<CloudConfig> {
+  const localConfig = getStoredCloudConfig();
+  try {
+    const res = await fetch('/api/cloud-config', {
+      headers: { Accept: 'application/json' }
+    });
+    if (res.ok) {
+      const serverConfig = await res.json();
+      if (serverConfig && serverConfig.googleSheetsWebhookUrl && serverConfig.googleSheetsWebhookUrl.trim().length > 0) {
+        const merged: CloudConfig = {
+          ...localConfig,
+          googleSheetsWebhookUrl: serverConfig.googleSheetsWebhookUrl.trim(),
+          mode: 'google_sheets'
+        };
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+        } catch {}
+        return merged;
+      }
+    }
+  } catch {
+    // Backend not answering
+  }
+  return localConfig;
+}
+
+// Initialize on module load
+if (typeof window !== 'undefined') {
+  initCloudConfigFromServer().catch(() => {});
 }
 
 // Generate a shareable URL that embeds the Webhook for colleagues' phones

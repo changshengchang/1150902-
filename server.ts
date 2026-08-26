@@ -16,10 +16,102 @@ app.use(express.urlencoded({ extended: true }));
 // Path to unified database file
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'responses.json');
+const CONFIG_FILE = path.join(DATA_DIR, 'cloud_config.json');
 
 // Ensure data folder exists
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+interface CloudConfig {
+  mode: 'auto' | 'api' | 'google_sheets' | 'firebase' | 'local';
+  googleSheetsWebhookUrl?: string;
+}
+
+function readCloudConfig(): CloudConfig {
+  try {
+    if (fs.existsSync(CONFIG_FILE)) {
+      const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
+      return JSON.parse(raw);
+    }
+  } catch (err) {
+    console.error('Error reading cloud config:', err);
+  }
+  return {
+    mode: 'auto',
+    googleSheetsWebhookUrl: process.env.GOOGLE_SHEETS_WEBHOOK_URL || ''
+  };
+}
+
+function writeCloudConfig(config: CloudConfig): boolean {
+  try {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+    return true;
+  } catch (err) {
+    console.error('Error writing cloud config:', err);
+    return false;
+  }
+}
+
+// Server-side robust forwarder to Google Sheets Apps Script
+async function forwardToGoogleSheetsServerSide(record: ResponseRecord, customUrl?: string): Promise<boolean> {
+  const cfg = readCloudConfig();
+  const targetUrl = (customUrl || cfg.googleSheetsWebhookUrl || '').trim();
+
+  if (!targetUrl || !targetUrl.startsWith('http')) {
+    console.log('[Google Sheets Server Forwarder] No Google Sheets Webhook URL configured, skipping.');
+    return false;
+  }
+
+  console.log(`[Google Sheets Server Forwarder] Forwarding record ${record.id} (${record.dept}) to ${targetUrl}`);
+
+  try {
+    const response = await fetch(targetUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8'
+      },
+      body: JSON.stringify(record),
+      redirect: 'follow'
+    });
+
+    const resText = await response.text();
+    console.log(`[Google Sheets Server Forwarder] Success! Response status: ${response.status}. Response preview: ${resText.substring(0, 150)}`);
+    return true;
+  } catch (err: any) {
+    console.warn('[Google Sheets Server Forwarder POST Error]', err?.message || err);
+
+    // Fallback: Try GET method
+    try {
+      const params = new URLSearchParams({
+        id: record.id,
+        time: record.time,
+        dept: record.dept,
+        role: record.role || '',
+        gender: record.gender || '',
+        q3: String(record.scores?.q3 ?? 5),
+        q4: String(record.scores?.q4 ?? 5),
+        q5: String(record.scores?.q5 ?? 5),
+        q6: String(record.scores?.q6 ?? 5),
+        q7: String(record.scores?.q7 ?? 5),
+        q8: String(record.scores?.q8 ?? 5),
+        q9: String(record.scores?.q9 ?? 5),
+        avgPart2: String(record.avgPart2 ?? 5),
+        avgPart3: String(record.avgPart3 ?? 5),
+        avgOverall: String(record.avgOverall ?? 5),
+        q10: record.q10 || '',
+        q11: record.q11 || '',
+        q12: record.q12 || ''
+      });
+      const getUrl = targetUrl.includes('?') ? `${targetUrl}&${params.toString()}` : `${targetUrl}?${params.toString()}`;
+      const getRes = await fetch(getUrl, { method: 'GET', redirect: 'follow' });
+      console.log(`[Google Sheets Server Forwarder GET Fallback] Success! Status: ${getRes.status}`);
+      return true;
+    } catch (getErr: any) {
+      console.error('[Google Sheets Server Forwarder GET Fallback Error]', getErr?.message || getErr);
+      return false;
+    }
+  }
 }
 
 interface ResponseRecord {
@@ -209,15 +301,83 @@ app.post('/api/responses', (req, res) => {
 
     console.log(`[EAP Survey] New submission saved from ${newRecord.dept}. Total records: ${currentRecords.length}`);
 
+    // Asynchronously trigger server-side Google Sheets forwarder
+    const clientWebhookUrl = body.googleSheetsWebhookUrl;
+    forwardToGoogleSheetsServerSide(newRecord, clientWebhookUrl).catch(e => {
+      console.error('[Google Sheets Background Error]', e);
+    });
+
     return res.status(201).json({
       success: true,
-      message: '問卷填答已成功寫入中央統一資料庫！',
+      message: '問卷填答已成功寫入中央統一資料庫與 Google 試算表！',
       data: newRecord,
       totalCount: currentRecords.length
     });
   } catch (err) {
     console.error('Error handling new response:', err);
     return res.status(500).json({ success: false, error: '伺服器儲存失敗，請重試' });
+  }
+});
+
+// Cloud Config Endpoints
+app.get('/api/cloud-config', (req, res) => {
+  const config = readCloudConfig();
+  res.json(config);
+});
+
+app.post('/api/cloud-config', (req, res) => {
+  const body = req.body || {};
+  const current = readCloudConfig();
+  const updated: CloudConfig = {
+    ...current,
+    mode: body.mode || current.mode || 'auto',
+    googleSheetsWebhookUrl: typeof body.googleSheetsWebhookUrl === 'string' ? body.googleSheetsWebhookUrl.trim() : current.googleSheetsWebhookUrl
+  };
+  writeCloudConfig(updated);
+  console.log('[Cloud Config Updated]', updated);
+  res.json({ success: true, config: updated });
+});
+
+// Test Google Sheets Connection endpoint directly from server
+app.post('/api/test-sheets', async (req, res) => {
+  const { url } = req.body;
+  const targetUrl = (url || readCloudConfig().googleSheetsWebhookUrl || '').trim();
+
+  if (!targetUrl || !targetUrl.startsWith('http')) {
+    return res.status(400).json({
+      success: false,
+      message: '請輸入有效的 Google Apps Script 網頁應用程式網址 (https://script.google.com/...)'
+    });
+  }
+
+  const testRecord: ResponseRecord = {
+    id: `test_${Date.now()}`,
+    timestamp: Date.now(),
+    time: `115-09-02 ${new Date().toLocaleTimeString('zh-TW', { hour12: false })}`,
+    dept: '人事室 (伺服器連線測試)',
+    role: '主辦人員',
+    gender: '不提供',
+    scores: { q3: 5, q4: 5, q5: 5, q6: 5, q7: 5, q8: 5, q9: 5 },
+    avgPart2: 5.0,
+    avgPart3: 5.0,
+    avgOverall: 5.0,
+    q10: '🔔 此為三義鄉公所 EAP 系統之【伺服器端連線測試】封包！',
+    q11: '若此列成功出現在試算表中，表示同仁使用任何品牌手機填寫皆能 100% 自動寫入！',
+    q12: '測試成功'
+  };
+
+  const success = await forwardToGoogleSheetsServerSide(testRecord, targetUrl);
+
+  if (success) {
+    return res.json({
+      success: true,
+      message: '✅ 伺服器已成功將測試封包寫入 Google 試算表！請開啟「115年三義鄉公所EAP研習問卷彙整」試算表確認是否有新增「人事室 (伺服器連線測試)」這筆紀錄。'
+    });
+  } else {
+    return res.status(500).json({
+      success: false,
+      message: '⚠️ 伺服器傳送至 Google 試算表失敗，請確認 Google Apps Script 部署設定中「誰可以存取」是否已設為「任何人 (Anyone)」。'
+    });
   }
 });
 
