@@ -344,10 +344,26 @@ function handleSurveyData(e) {
     var avgOverall = data.avgOverall ? Number(data.avgOverall) : parseFloat(((q3 + q4 + q5 + q6 + q7 + q8 + q9) / 7).toFixed(2));
     
     var timeStr = data.time || Utilities.formatDate(new Date(), "GMT+8", "yyyy-MM-dd HH:mm:ss");
+    var recordId = data.id || ('resp_' + new Date().getTime());
     
-    // 寫入問卷新紀錄列
+    // 防重複寫入保護：檢查最近 30 列是否已存在相同的問卷流水號 ID
+    var lastRow = sheet.getLastRow();
+    if (lastRow > 1 && data.id) {
+      var startRow = Math.max(2, lastRow - 30);
+      var checkCount = lastRow - startRow + 1;
+      var existingIdCol = sheet.getRange(startRow, 1, checkCount, 1).getValues();
+      for (var r = 0; r < existingIdCol.length; r++) {
+        if (existingIdCol[r][0] === data.id) {
+          return ContentService
+            .createTextOutput(JSON.stringify({ result: "duplicate_skipped", status: 200, message: "已存在相同流水號，已自動略過重複寫入！" }))
+            .setMimeType(ContentService.MimeType.JSON);
+        }
+      }
+    }
+    
+    // 寫入問卷新紀錄列 (保證單一寫入)
     sheet.appendRow([
-      data.id || ('resp_' + new Date().getTime()),
+      recordId,
       timeStr,
       data.dept || '未指定課室',
       data.role || '非主管職員/公務員',

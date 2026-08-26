@@ -244,140 +244,46 @@ class StorageService {
     return { label: '瀏覽器安全持久化資料庫', mode: 'local', isCloud: false };
   }
 
-  // Send single record to Google Sheets Apps Script Webhook with multi-channel fallback
+  // In-memory set to prevent duplicate client-side transmissions
+  private clientSyncedRecordIds = new Set<string>();
+
+  // Send single record to Google Sheets Apps Script Webhook (Single clean transmission)
   public async syncRecordToGoogleSheets(webhookUrl: string, record: SurveyResponse): Promise<boolean> {
     if (!webhookUrl || !webhookUrl.startsWith('http')) return false;
 
     const trimmedUrl = webhookUrl.trim();
+    if (this.clientSyncedRecordIds.has(record.id)) {
+      console.log(`[Storage] Record ${record.id} already synced to Google Sheets, skipping duplicate.`);
+      return true;
+    }
+    this.clientSyncedRecordIds.add(record.id);
+
     const payloadString = JSON.stringify(record);
 
-    let success = false;
-
-    // Channel 1: Hidden Iframe Form POST (100% immune to mobile CORS and WebKit blocking)
     try {
-      if (typeof document !== 'undefined') {
-        const iframeName = `g_sync_frame_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-        const iframe = document.createElement('iframe');
-        iframe.name = iframeName;
-        iframe.style.display = 'none';
-        document.body.appendChild(iframe);
-
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = trimmedUrl;
-        form.target = iframeName;
-        form.style.display = 'none';
-
-        // Hidden input with serialized payload
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = 'postData';
-        input.value = payloadString;
-        form.appendChild(input);
-
-        // Also add direct key-value inputs for max compatibility
-        const addField = (name: string, val: any) => {
-          const inp = document.createElement('input');
-          inp.type = 'hidden';
-          inp.name = name;
-          inp.value = typeof val === 'object' ? JSON.stringify(val) : String(val ?? '');
-          form.appendChild(inp);
-        };
-
-        addField('id', record.id);
-        addField('time', record.time);
-        addField('dept', record.dept);
-        addField('role', record.role || '');
-        addField('gender', record.gender || '');
-        addField('q3', record.scores?.q3 ?? 5);
-        addField('q4', record.scores?.q4 ?? 5);
-        addField('q5', record.scores?.q5 ?? 5);
-        addField('q6', record.scores?.q6 ?? 5);
-        addField('q7', record.scores?.q7 ?? 5);
-        addField('q8', record.scores?.q8 ?? 5);
-        addField('q9', record.scores?.q9 ?? 5);
-        addField('avgPart2', record.avgPart2 ?? 5);
-        addField('avgPart3', record.avgPart3 ?? 5);
-        addField('avgOverall', record.avgOverall ?? 5);
-        addField('q10', record.q10 || '');
-        addField('q11', record.q11 || '');
-        addField('q12', record.q12 || '');
-
-        document.body.appendChild(form);
-        form.submit();
-
-        setTimeout(() => {
-          try {
-            document.body.removeChild(form);
-            document.body.removeChild(iframe);
-          } catch {}
-        }, 8000);
-
-        success = true;
-      }
-    } catch (e) {
-      console.warn('Iframe form submit fallback encountered error:', e);
-    }
-
-    // Channel 2: Fetch with keepalive & no-cors
-    try {
-      fetch(trimmedUrl, {
+      // Direct clean POST with no-cors to prevent browser preflight block
+      await fetch(trimmedUrl, {
         method: 'POST',
         mode: 'no-cors',
-        keepalive: true,
         headers: {
           'Content-Type': 'text/plain;charset=utf-8'
         },
         body: payloadString
-      }).then(() => {
-        console.log('Fetch keepalive dispatched to Google Apps Script for:', record.id);
-      }).catch(err => {
-        console.warn('Fetch keepalive warning:', err);
       });
-      success = true;
+      console.log('Successfully dispatched single sync to Google Sheets for:', record.id);
+      return true;
     } catch (err) {
-      console.warn('Fetch keepalive failed:', err);
-    }
-
-    // Channel 3: Navigator sendBeacon (if available)
-    try {
-      if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
-        const blob = new Blob([payloadString], { type: 'text/plain;charset=utf-8' });
-        navigator.sendBeacon(trimmedUrl, blob);
-        success = true;
+      console.warn('Direct fetch to Google Sheets failed, trying sendBeacon fallback:', err);
+      try {
+        if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+          const blob = new Blob([payloadString], { type: 'text/plain;charset=utf-8' });
+          return navigator.sendBeacon(trimmedUrl, blob);
+        }
+      } catch (beaconErr) {
+        console.error('sendBeacon fallback also failed:', beaconErr);
       }
-    } catch (beaconErr) {
-      console.warn('sendBeacon error:', beaconErr);
+      return false;
     }
-
-    // Channel 4: GET pixel beacon fallback
-    try {
-      const params = new URLSearchParams({
-        id: record.id,
-        time: record.time,
-        dept: record.dept,
-        role: record.role || '',
-        gender: record.gender || '',
-        q3: String(record.scores?.q3 ?? 5),
-        q4: String(record.scores?.q4 ?? 5),
-        q5: String(record.scores?.q5 ?? 5),
-        q6: String(record.scores?.q6 ?? 5),
-        q7: String(record.scores?.q7 ?? 5),
-        q8: String(record.scores?.q8 ?? 5),
-        q9: String(record.scores?.q9 ?? 5),
-        avgPart2: String(record.avgPart2 ?? 5),
-        avgPart3: String(record.avgPart3 ?? 5),
-        avgOverall: String(record.avgOverall ?? 5),
-        q10: record.q10 || '',
-        q11: record.q11 || '',
-        q12: record.q12 || ''
-      });
-      const getUrl = trimmedUrl.includes('?') ? `${trimmedUrl}&${params.toString()}` : `${trimmedUrl}?${params.toString()}`;
-      const img = new Image();
-      img.src = getUrl;
-    } catch {}
-
-    return success;
   }
 
   // Test Google Sheets Connection with Server + Client dual validation
@@ -529,13 +435,9 @@ class StorageService {
       q12: payload.q12 ? payload.q12.trim() : '（無特別填寫）'
     };
 
-    // 1. Sync to Google Sheets if configured (from localStorage or shared URL param)
     const config = getStoredCloudConfig();
-    if (config.googleSheetsWebhookUrl && config.googleSheetsWebhookUrl.trim().length > 0) {
-      this.syncRecordToGoogleSheets(config.googleSheetsWebhookUrl.trim(), newRecord);
-    }
 
-    // 2. Sync to Express API if available
+    // 1. Primary path: Sync via Express API (which handles unified storage & single server-side forward to Google Sheets)
     const isApi = await this.checkApi();
     if (isApi) {
       try {
@@ -544,6 +446,9 @@ class StorageService {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             ...payload,
+            id: newRecord.id,
+            timestamp: newRecord.timestamp,
+            time: newRecord.time,
             googleSheetsWebhookUrl: config.googleSheetsWebhookUrl
           })
         });
@@ -562,8 +467,13 @@ class StorageService {
           }
         }
       } catch (err) {
-        console.warn('API POST failed, saving to local resilient storage:', err);
+        console.warn('API POST failed, falling back to client-side direct sync:', err);
       }
+    }
+
+    // 2. Offline / Static fallback: Direct client sync to Google Sheets (if configured)
+    if (config.googleSheetsWebhookUrl && config.googleSheetsWebhookUrl.trim().length > 0) {
+      this.syncRecordToGoogleSheets(config.googleSheetsWebhookUrl.trim(), newRecord);
     }
 
     // 3. Save to local browser storage

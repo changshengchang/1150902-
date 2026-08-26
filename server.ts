@@ -53,6 +53,9 @@ function writeCloudConfig(config: CloudConfig): boolean {
   }
 }
 
+// Track recently forwarded record IDs to guarantee single transmission per record
+const forwardedRecordIds = new Set<string>();
+
 // Server-side robust forwarder to Google Sheets Apps Script
 async function forwardToGoogleSheetsServerSide(record: ResponseRecord, customUrl?: string): Promise<boolean> {
   const cfg = readCloudConfig();
@@ -61,6 +64,19 @@ async function forwardToGoogleSheetsServerSide(record: ResponseRecord, customUrl
   if (!targetUrl || !targetUrl.startsWith('http')) {
     console.log('[Google Sheets Server Forwarder] No Google Sheets Webhook URL configured, skipping.');
     return false;
+  }
+
+  // Deduplication check: Do not send the same record ID more than once
+  if (forwardedRecordIds.has(record.id)) {
+    console.log(`[Google Sheets Server Forwarder] Record ${record.id} already forwarded, skipping duplicate request.`);
+    return true;
+  }
+  forwardedRecordIds.add(record.id);
+
+  // Keep deduplication set bounded
+  if (forwardedRecordIds.size > 2000) {
+    const oldestKey = forwardedRecordIds.values().next().value;
+    if (oldestKey) forwardedRecordIds.delete(oldestKey);
   }
 
   console.log(`[Google Sheets Server Forwarder] Forwarding record ${record.id} (${record.dept}) to ${targetUrl}`);

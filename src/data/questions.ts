@@ -11,9 +11,7 @@ export const DEPARTMENTS = [
   '政風室',
   '清潔隊',
   '圖書館',
-  '市場',
-  '幼兒園',
-  '其他/志工單位'
+  '市場'
 ];
 
 export const ROLES = [
