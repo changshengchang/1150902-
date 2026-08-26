@@ -28,24 +28,36 @@ interface CloudConfig {
   googleSheetsWebhookUrl?: string;
 }
 
+// In-memory cache for cloud config
+let cachedCloudConfig: CloudConfig | null = null;
+
 function readCloudConfig(): CloudConfig {
+  if (cachedCloudConfig && cachedCloudConfig.googleSheetsWebhookUrl) {
+    return cachedCloudConfig;
+  }
   try {
     if (fs.existsSync(CONFIG_FILE)) {
       const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      cachedCloudConfig = parsed;
+      return parsed;
     }
   } catch (err) {
     console.error('Error reading cloud config:', err);
   }
-  return {
+  const fallback: CloudConfig = {
     mode: 'auto',
     googleSheetsWebhookUrl: process.env.GOOGLE_SHEETS_WEBHOOK_URL || ''
   };
+  cachedCloudConfig = fallback;
+  return fallback;
 }
 
 function writeCloudConfig(config: CloudConfig): boolean {
   try {
+    cachedCloudConfig = config;
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
+    console.log('[Server Cloud Config Saved]', config);
     return true;
   } catch (err) {
     console.error('Error writing cloud config:', err);
@@ -66,9 +78,14 @@ async function forwardToGoogleSheetsServerSide(record: ResponseRecord, customUrl
     return false;
   }
 
+  // Ensure config is persisted if we received a customUrl from client
+  if (customUrl && customUrl.startsWith('http') && cfg.googleSheetsWebhookUrl !== customUrl) {
+    writeCloudConfig({ ...cfg, googleSheetsWebhookUrl: customUrl, mode: 'google_sheets' });
+  }
+
   // Deduplication check: Do not send the same record ID more than once
   if (forwardedRecordIds.has(record.id)) {
-    console.log(`[Google Sheets Server Forwarder] Record ${record.id} already forwarded, skipping duplicate request.`);
+    console.log(`[Google Sheets Server Forwarder] Record ${record.id} already forwarded, skipping duplicate.`);
     return true;
   }
   forwardedRecordIds.add(record.id);
@@ -81,46 +98,71 @@ async function forwardToGoogleSheetsServerSide(record: ResponseRecord, customUrl
 
   console.log(`[Google Sheets Server Forwarder] Forwarding record ${record.id} (${record.dept}) to ${targetUrl}`);
 
+  // Format comprehensive flat and nested payload for 100% Google Apps Script compatibility
+  const forwardPayload = {
+    id: record.id,
+    timestamp: record.timestamp,
+    time: record.time,
+    dept: record.dept,
+    role: record.role || '非主管職員/公務員',
+    gender: record.gender || '未提供',
+    q3: record.scores?.q3 ?? 5,
+    q4: record.scores?.q4 ?? 5,
+    q5: record.scores?.q5 ?? 5,
+    q6: record.scores?.q6 ?? 5,
+    q7: record.scores?.q7 ?? 5,
+    q8: record.scores?.q8 ?? 5,
+    q9: record.scores?.q9 ?? 5,
+    scores: record.scores || { q3: 5, q4: 5, q5: 5, q6: 5, q7: 5, q8: 5, q9: 5 },
+    avgPart2: record.avgPart2 ?? 5,
+    avgPart3: record.avgPart3 ?? 5,
+    avgOverall: record.avgOverall ?? 5,
+    q10: record.q10 || '（無特別填寫）',
+    q11: record.q11 || '（無特別填寫）',
+    q12: record.q12 || '（無特別填寫）'
+  };
+
   try {
     const response = await fetch(targetUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'text/plain;charset=utf-8'
       },
-      body: JSON.stringify(record),
-      redirect: 'follow'
+      body: JSON.stringify(forwardPayload),
+      redirect: 'follow',
+      signal: AbortSignal.timeout(10000)
     });
 
     const resText = await response.text();
-    console.log(`[Google Sheets Server Forwarder] Success! Response status: ${response.status}. Response preview: ${resText.substring(0, 150)}`);
+    console.log(`[Google Sheets Server Forwarder] Success! Status: ${response.status}. Response preview: ${resText.substring(0, 150)}`);
     return true;
   } catch (err: any) {
-    console.warn('[Google Sheets Server Forwarder POST Error]', err?.message || err);
+    console.warn('[Google Sheets Server Forwarder POST Warning]', err?.message || err);
 
-    // Fallback: Try GET method
+    // Fallback: Try Form/GET URL
     try {
       const params = new URLSearchParams({
-        id: record.id,
-        time: record.time,
-        dept: record.dept,
-        role: record.role || '',
-        gender: record.gender || '',
-        q3: String(record.scores?.q3 ?? 5),
-        q4: String(record.scores?.q4 ?? 5),
-        q5: String(record.scores?.q5 ?? 5),
-        q6: String(record.scores?.q6 ?? 5),
-        q7: String(record.scores?.q7 ?? 5),
-        q8: String(record.scores?.q8 ?? 5),
-        q9: String(record.scores?.q9 ?? 5),
-        avgPart2: String(record.avgPart2 ?? 5),
-        avgPart3: String(record.avgPart3 ?? 5),
-        avgOverall: String(record.avgOverall ?? 5),
-        q10: record.q10 || '',
-        q11: record.q11 || '',
-        q12: record.q12 || ''
+        id: forwardPayload.id,
+        time: forwardPayload.time,
+        dept: forwardPayload.dept,
+        role: forwardPayload.role,
+        gender: forwardPayload.gender,
+        q3: String(forwardPayload.q3),
+        q4: String(forwardPayload.q4),
+        q5: String(forwardPayload.q5),
+        q6: String(forwardPayload.q6),
+        q7: String(forwardPayload.q7),
+        q8: String(forwardPayload.q8),
+        q9: String(forwardPayload.q9),
+        avgPart2: String(forwardPayload.avgPart2),
+        avgPart3: String(forwardPayload.avgPart3),
+        avgOverall: String(forwardPayload.avgOverall),
+        q10: forwardPayload.q10,
+        q11: forwardPayload.q11,
+        q12: forwardPayload.q12
       });
       const getUrl = targetUrl.includes('?') ? `${targetUrl}&${params.toString()}` : `${targetUrl}?${params.toString()}`;
-      const getRes = await fetch(getUrl, { method: 'GET', redirect: 'follow' });
+      const getRes = await fetch(getUrl, { method: 'GET', redirect: 'follow', signal: AbortSignal.timeout(8000) });
       console.log(`[Google Sheets Server Forwarder GET Fallback] Success! Status: ${getRes.status}`);
       return true;
     } catch (getErr: any) {
@@ -271,7 +313,7 @@ app.get('/api/responses', (req, res) => {
 });
 
 // 3. Submit a new response (Everyone can submit anonymously)
-app.post('/api/responses', (req, res) => {
+app.post('/api/responses', async (req, res) => {
   try {
     const body = req.body;
     if (!body || !body.dept || !body.scores) {
@@ -296,12 +338,12 @@ app.post('/api/responses', (req, res) => {
     const timeStr = `${rocYear}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
 
     const newRecord: ResponseRecord = {
-      id: `resp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      timestamp: Date.now(),
-      time: timeStr,
+      id: body.id || `resp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      timestamp: body.timestamp || Date.now(),
+      time: body.time || timeStr,
       dept: String(body.dept).trim(),
-      role: body.role ? String(body.role).trim() : undefined,
-      gender: body.gender ? String(body.gender).trim() : undefined,
+      role: body.role ? String(body.role).trim() : '非主管職員/公務員',
+      gender: body.gender ? String(body.gender).trim() : '未提供',
       scores: { q3: s3, q4: s4, q5: s5, q6: s6, q7: s7, q8: s8, q9: s9 },
       avgPart2,
       avgPart3,
@@ -317,15 +359,22 @@ app.post('/api/responses', (req, res) => {
 
     console.log(`[EAP Survey] New submission saved from ${newRecord.dept}. Total records: ${currentRecords.length}`);
 
-    // Asynchronously trigger server-side Google Sheets forwarder
-    const clientWebhookUrl = body.googleSheetsWebhookUrl;
-    forwardToGoogleSheetsServerSide(newRecord, clientWebhookUrl).catch(e => {
-      console.error('[Google Sheets Background Error]', e);
-    });
+    // If client provided a webhook URL, persist it if server doesn't have one
+    const clientWebhookUrl = typeof body.googleSheetsWebhookUrl === 'string' ? body.googleSheetsWebhookUrl.trim() : '';
+    if (clientWebhookUrl && clientWebhookUrl.startsWith('http')) {
+      const currentCfg = readCloudConfig();
+      if (!currentCfg.googleSheetsWebhookUrl) {
+        writeCloudConfig({ ...currentCfg, googleSheetsWebhookUrl: clientWebhookUrl, mode: 'google_sheets' });
+      }
+    }
+
+    // Trigger server-side Google Sheets forwarder
+    const sheetsSuccess = await forwardToGoogleSheetsServerSide(newRecord, clientWebhookUrl);
 
     return res.status(201).json({
       success: true,
       message: '問卷填答已成功寫入中央統一資料庫與 Google 試算表！',
+      googleSheetsSynced: sheetsSuccess,
       data: newRecord,
       totalCount: currentRecords.length
     });
@@ -366,6 +415,14 @@ app.post('/api/test-sheets', async (req, res) => {
     });
   }
 
+  // AUTOMATICALLY PERSIST TESTED VALID URL TO SERVER CLOUD CONFIG
+  const currentCfg = readCloudConfig();
+  writeCloudConfig({
+    ...currentCfg,
+    mode: 'google_sheets',
+    googleSheetsWebhookUrl: targetUrl
+  });
+
   const testRecord: ResponseRecord = {
     id: `test_${Date.now()}`,
     timestamp: Date.now(),
@@ -387,7 +444,7 @@ app.post('/api/test-sheets', async (req, res) => {
   if (success) {
     return res.json({
       success: true,
-      message: '✅ 伺服器已成功將測試封包寫入 Google 試算表！請開啟「115年三義鄉公所EAP研習問卷彙整」試算表確認是否有新增「人事室 (伺服器連線測試)」這筆紀錄。'
+      message: '✅ 伺服器已成功將測試封包寫入 Google 試算表並已永久儲存設定！所有同仁手機填寫問卷將直接自動寫入！'
     });
   } else {
     return res.status(500).json({

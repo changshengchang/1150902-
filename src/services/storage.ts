@@ -258,7 +258,30 @@ class StorageService {
     }
     this.clientSyncedRecordIds.add(record.id);
 
-    const payloadString = JSON.stringify(record);
+    const flatRecord = {
+      id: record.id,
+      timestamp: record.timestamp,
+      time: record.time,
+      dept: record.dept,
+      role: record.role || '非主管職員/公務員',
+      gender: record.gender || '未提供',
+      q3: record.scores?.q3 ?? 5,
+      q4: record.scores?.q4 ?? 5,
+      q5: record.scores?.q5 ?? 5,
+      q6: record.scores?.q6 ?? 5,
+      q7: record.scores?.q7 ?? 5,
+      q8: record.scores?.q8 ?? 5,
+      q9: record.scores?.q9 ?? 5,
+      scores: record.scores || { q3: 5, q4: 5, q5: 5, q6: 5, q7: 5, q8: 5, q9: 5 },
+      avgPart2: record.avgPart2 ?? 5,
+      avgPart3: record.avgPart3 ?? 5,
+      avgOverall: record.avgOverall ?? 5,
+      q10: record.q10 || '（無特別填寫）',
+      q11: record.q11 || '（無特別填寫）',
+      q12: record.q12 || '（無特別填寫）'
+    };
+
+    const payloadString = JSON.stringify(flatRecord);
 
     try {
       // Direct clean POST with no-cors to prevent browser preflight block
@@ -458,6 +481,12 @@ class StorageService {
           if (json.success && json.data) {
             const locals = getLocalResponses();
             saveLocalResponses([json.data, ...locals.filter(x => x.id !== json.data.id)]);
+
+            // If server indicated Google Sheets was not synced (or server had no URL), and client has URL, do client direct fallback
+            if (!json.googleSheetsSynced && config.googleSheetsWebhookUrl && config.googleSheetsWebhookUrl.trim().length > 0) {
+              this.syncRecordToGoogleSheets(config.googleSheetsWebhookUrl.trim(), json.data);
+            }
+
             return {
               success: true,
               data: json.data,

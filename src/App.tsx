@@ -8,6 +8,7 @@ import { AdminPanel } from './components/AdminPanel';
 import { ExecutiveReportModal } from './components/ExecutiveReportModal';
 import { SurveyResponse, AggregateStats } from './types';
 import { storageService } from './services/storage';
+import { initCloudConfigFromServer } from './services/cloudConfig';
 import { Shield, PhoneCall, HeartHandshake } from 'lucide-react';
 
 export default function App() {
@@ -42,6 +43,7 @@ export default function App() {
 
   // Initial load
   useEffect(() => {
+    initCloudConfigFromServer().catch(() => {});
     fetchData();
   }, [fetchData]);
 

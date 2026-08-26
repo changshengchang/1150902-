@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { SurveyResponse, AggregateStats } from '../types';
 import { DEPARTMENTS, QUESTIONS } from '../data/questions';
 import { storageService } from '../services/storage';
-import { getStoredCloudConfig, saveStoredCloudConfig, getShareableSurveyUrl, CloudConfig } from '../services/cloudConfig';
+import { getStoredCloudConfig, saveStoredCloudConfig, initCloudConfigFromServer, getShareableSurveyUrl, CloudConfig } from '../services/cloudConfig';
 import {
   Lock,
   Unlock,
@@ -75,9 +75,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   });
 
   useEffect(() => {
-    const cfg = getStoredCloudConfig();
-    setCloudConfig(cfg);
-    setSheetsUrl(cfg.googleSheetsWebhookUrl || '');
+    initCloudConfigFromServer().then(cfg => {
+      setCloudConfig(cfg);
+      if (cfg.googleSheetsWebhookUrl) {
+        setSheetsUrl(cfg.googleSheetsWebhookUrl);
+      }
+    });
   }, []);
 
   const showToast = (msg: string) => {
@@ -231,16 +234,26 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       return;
     }
 
+    const trimmed = sheetsUrl.trim();
+    const updated: CloudConfig = {
+      ...cloudConfig,
+      googleSheetsWebhookUrl: trimmed,
+      mode: 'google_sheets'
+    };
+    saveStoredCloudConfig(updated);
+    setCloudConfig(updated);
+
     setTestStatus({ loading: true, result: null, isSuccess: false });
     try {
-      const res = await storageService.testGoogleSheetsConnection(sheetsUrl);
+      const res = await storageService.testGoogleSheetsConnection(trimmed);
       setTestStatus({
         loading: false,
         result: res.message,
         isSuccess: res.success
       });
       if (res.success) {
-        showToast('✅ 測試資料已成功送出！請檢視 Google 試算表');
+        showToast('✅ 測試資料已成功送出並自動儲存設定！請檢視 Google 試算表');
+        onRefresh();
       }
     } catch (err: any) {
       setTestStatus({
