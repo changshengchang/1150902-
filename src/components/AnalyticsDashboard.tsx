@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AggregateStats, SurveyResponse } from '../types';
+import { storageService } from '../services/storage';
 import {
   BarChart,
   Bar,
@@ -61,6 +62,30 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   const [feedbackTab, setFeedbackTab] = useState<'all' | 'q10' | 'q11' | 'q12'>('all');
   const [searchDept, setSearchDept] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState<string>('');
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
+
+  const handleSyncSheets = async () => {
+    setIsSyncing(true);
+    try {
+      const res = await storageService.syncFromGoogleSheets();
+      setSyncMsg(res.message);
+      onRefresh();
+      setTimeout(() => setSyncMsg(null), 4000);
+    } catch (err: any) {
+      setSyncMsg(`⚠️ 同步失敗：${err?.message || '請確認試算表連線'}`);
+      setTimeout(() => setSyncMsg(null), 4000);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleQuickSeed = async () => {
+    try {
+      await storageService.seedMockResponses();
+      onRefresh();
+    } catch (e) {}
+  };
 
   if (isLoading && !stats) {
     return (
@@ -73,21 +98,38 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
   if (!stats || stats.totalCount === 0) {
     return (
-      <div className="bg-white rounded-2xl p-12 text-center shadow-sm border border-stone-200 space-y-4">
-        <div className="w-16 h-16 bg-stone-100 rounded-full flex items-center justify-center mx-auto text-2xl">
+      <div className="bg-white rounded-2xl p-10 text-center shadow-sm border border-stone-200 space-y-4 max-w-xl mx-auto">
+        <div className="w-16 h-16 bg-emerald-50 text-emerald-700 rounded-2xl flex items-center justify-center mx-auto text-2xl shadow-inner">
           📊
         </div>
-        <h3 className="text-lg font-bold text-stone-800">目前中央統一資料庫尚無問卷填答資料</h3>
-        <p className="text-xs text-stone-500 max-w-md mx-auto">
-          請切換至「✍️ 問卷填答」送出第一份問卷，或至「管理後台」產生示範測試數據。
+        <h3 className="text-lg font-black text-stone-800">目前中央統一資料庫尚無問卷填答資料</h3>
+        <p className="text-xs text-stone-500 leading-relaxed max-w-md mx-auto">
+          同仁若已在 Google 試算表中填報資料，請點擊下方<b>「從 Google 試算表同步資料」</b>按鈕直接抓取；或可填寫問卷或產生示範數據。
         </p>
-        <button
-          onClick={onRefresh}
-          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800 shadow"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-          重新整理
-        </button>
+
+        {syncMsg && (
+          <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold p-3 rounded-xl">
+            {syncMsg}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+          <button
+            onClick={handleSyncSheets}
+            disabled={isSyncing}
+            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800 shadow transition disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span>{isSyncing ? '正在自試算表同步中...' : '🔄 從 Google 試算表同步資料'}</span>
+          </button>
+
+          <button
+            onClick={handleQuickSeed}
+            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-stone-100 text-stone-700 text-xs font-bold hover:bg-stone-200 border border-stone-300 transition"
+          >
+            <span>➕ 產生 5 筆示範數據</span>
+          </button>
+        </div>
       </div>
     );
   }
@@ -133,13 +175,23 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
         <div className="flex flex-wrap items-center gap-2">
           <button
+            onClick={handleSyncSheets}
+            disabled={isSyncing || isLoading}
+            className="flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold px-3.5 py-2.5 rounded-xl border border-emerald-300 transition"
+            title="從 Google 試算表抓取最新問卷資料"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-emerald-700 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span>{isSyncing ? '同步中...' : '🔄 同步 Google 試算表'}</span>
+          </button>
+
+          <button
             id="refresh-stats-btn"
             onClick={onRefresh}
             disabled={isLoading}
             className="flex items-center gap-1.5 bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold px-3.5 py-2.5 rounded-xl border border-stone-300 transition"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-            <span>即時重新整理</span>
+            <span>重新整理</span>
           </button>
 
           <button

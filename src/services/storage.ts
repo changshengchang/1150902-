@@ -672,6 +672,242 @@ class StorageService {
 
     return csv;
   }
+
+  // 9. Sync / Pull from Google Sheets (Bi-directional)
+  public async syncFromGoogleSheets(customUrl?: string): Promise<{ success: boolean; message: string; totalCount: number; newCount: number; data: SurveyResponse[] }> {
+    const config = getStoredCloudConfig();
+    const targetUrl = (customUrl || config.googleSheetsWebhookUrl || '').trim();
+
+    if (!targetUrl || !targetUrl.startsWith('http')) {
+      const current = getLocalResponses();
+      return { success: false, message: '請先至後台設定 Google 試算表 Webhook 網址', totalCount: current.length, newCount: 0, data: current };
+    }
+
+    // 1. Try server API sync first
+    const isApi = await this.checkApi();
+    if (isApi) {
+      try {
+        const res = await fetch('/api/sync-sheets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: targetUrl })
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && Array.isArray(json.data)) {
+            saveLocalResponses(json.data);
+            return {
+              success: true,
+              message: json.message || `✅ 成功同步！目前共 ${json.data.length} 筆問卷`,
+              totalCount: json.data.length,
+              newCount: json.newCount || 0,
+              data: json.data
+            };
+          }
+        }
+      } catch (err) {
+        console.warn('Server sync-sheets failed, attempting direct browser sync:', err);
+      }
+    }
+
+    // 2. Direct browser sync fallback
+    try {
+      const fetchUrl = targetUrl.includes('?') ? `${targetUrl}&action=read` : `${targetUrl}?action=read`;
+      const res = await fetch(fetchUrl);
+      const json = await res.json();
+      if (json && Array.isArray(json.data)) {
+        const current = getLocalResponses();
+        const map = new Map<string, SurveyResponse>();
+        json.data.forEach((item: any, i: number) => {
+          if (!item.dept && !item.scores && !item.q3) return;
+          const q3 = Number(item.q3 || item.scores?.q3) || 5;
+          const q4 = Number(item.q4 || item.scores?.q4) || 5;
+          const q5 = Number(item.q5 || item.scores?.q5) || 5;
+          const q6 = Number(item.q6 || item.scores?.q6) || 5;
+          const q7 = Number(item.q7 || item.scores?.q7) || 5;
+          const q8 = Number(item.q8 || item.scores?.q8) || 5;
+          const q9 = Number(item.q9 || item.scores?.q9) || 5;
+          const avgPart2 = item.avgPart2 ? Number(item.avgPart2) : parseFloat(((q3 + q4 + q5 + q6) / 4).toFixed(2));
+          const avgPart3 = item.avgPart3 ? Number(item.avgPart3) : parseFloat(((q7 + q8 + q9) / 3).toFixed(2));
+          const avgOverall = item.avgOverall ? Number(item.avgOverall) : parseFloat(((q3 + q4 + q5 + q6 + q7 + q8 + q9) / 7).toFixed(2));
+
+          const record: SurveyResponse = {
+            id: item.id || `sheet_${item.time || Date.now()}_${i}`,
+            timestamp: item.timestamp || (item.time ? new Date(String(item.time).replace(/-/g, '/')).getTime() : Date.now()),
+            time: item.time || '115-09-02 14:00:00',
+            dept: item.dept || '未指定課室',
+            role: item.role || '非主管職員/公務員',
+            gender: item.gender || '未提供',
+            scores: { q3, q4, q5, q6, q7, q8, q9 },
+            avgPart2,
+            avgPart3,
+            avgOverall,
+            q10: item.q10 || '（無特別填寫）',
+            q11: item.q11 || '（無特別填寫）',
+            q12: item.q12 || '（無特別填寫）'
+          };
+          map.set(record.id, record);
+        });
+
+        current.forEach(c => {
+          if (!map.has(c.id)) map.set(c.id, c);
+        });
+
+        const merged = Array.from(map.values()).sort((a, b) => b.timestamp - a.timestamp);
+        saveLocalResponses(merged);
+
+        return {
+          success: true,
+          message: `✅ 已自 Google 試算表同步資料！目前共 ${merged.length} 筆問卷`,
+          totalCount: merged.length,
+          newCount: json.data.length,
+          data: merged
+        };
+      }
+    } catch (e: any) {
+      console.error('Browser sync failed:', e);
+    }
+
+    const locals = getLocalResponses();
+    return {
+      success: false,
+      message: '尚未能從 Google 試算表自動讀回資料，建議檢查 Apps Script 程式碼是否已更新為最新版，或使用下方「手動貼上試算表內容匯入」功能。',
+      totalCount: locals.length,
+      newCount: 0,
+      data: locals
+    };
+  }
+
+  // 10. Parse Pasted Google Sheet / Excel Text into SurveyResponse objects
+  public parsePastedSpreadsheetText(rawText: string): SurveyResponse[] {
+    if (!rawText || !rawText.trim()) return [];
+    const lines = rawText.trim().split(/\r?\n/);
+    if (lines.length === 0) return [];
+
+    const results: SurveyResponse[] = [];
+    const deptsList = ['民政課', '財行課', '建設課', '觀農課', '社福課', '主計室', '人事室', '清潔隊', '圖書館', '市場'];
+
+    lines.forEach((line, lineIdx) => {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) return;
+
+      // Skip header lines
+      if (trimmedLine.includes('流水號') || trimmedLine.includes('填答時間') || trimmedLine.includes('服務單位') || trimmedLine.includes('主題符合需求')) {
+        return;
+      }
+
+      // Split by tab (Excel/Sheets copy) or comma
+      let cols = trimmedLine.split('\t');
+      if (cols.length < 5) {
+        cols = trimmedLine.split(',');
+      }
+
+      if (cols.length < 3) return;
+
+      // Clean columns
+      cols = cols.map(c => c.trim().replace(/^["']|["']$/g, ''));
+
+      // Find dept
+      let dept = '未指定課室';
+      for (const d of deptsList) {
+        if (cols.some(c => c.includes(d))) {
+          dept = d;
+          break;
+        }
+      }
+      if (dept === '未指定課室' && cols[2]) {
+        dept = cols[2];
+      }
+
+      // Find scores (numbers between 1 and 5)
+      const numericCols: number[] = [];
+      cols.forEach(c => {
+        const num = parseFloat(c);
+        if (!isNaN(num) && num >= 1 && num <= 5) {
+          numericCols.push(num);
+        }
+      });
+
+      const s3 = numericCols[0] || 5;
+      const s4 = numericCols[1] || 5;
+      const s5 = numericCols[2] || 5;
+      const s6 = numericCols[3] || 5;
+      const s7 = numericCols[4] || 5;
+      const s8 = numericCols[5] || 5;
+      const s9 = numericCols[6] || 5;
+
+      const avgP2 = parseFloat(((s3 + s4 + s5 + s6) / 4).toFixed(2));
+      const avgP3 = parseFloat(((s7 + s8 + s9) / 3).toFixed(2));
+      const avgOverall = parseFloat(((s3 + s4 + s5 + s6 + s7 + s8 + s9) / 7).toFixed(2));
+
+      // Time
+      let timeStr = cols[1] || '';
+      if (!timeStr || !timeStr.includes('-') && !timeStr.includes('/')) {
+        const now = new Date();
+        timeStr = `115-09-02 ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      }
+
+      // Text comments
+      const textCols = cols.filter(c => c.length > 4 && !c.startsWith('resp_') && !c.includes(':'));
+      const q10 = textCols[0] || cols[cols.length - 3] || '（無特別填寫）';
+      const q11 = textCols[1] || cols[cols.length - 2] || '（無特別填寫）';
+      const q12 = textCols[2] || cols[cols.length - 1] || '（無特別填寫）';
+
+      results.push({
+        id: cols[0] && cols[0].startsWith('resp_') ? cols[0] : `pasted_${Date.now()}_${lineIdx}_${Math.random().toString(36).substring(2, 6)}`,
+        timestamp: Date.now() - lineIdx * 1000,
+        time: timeStr,
+        dept,
+        role: cols.find(c => c.includes('主管') || c.includes('人員') || c.includes('公務員')) || '非主管職員/公務員',
+        gender: cols.find(c => c === '男' || c === '女') || '未提供',
+        scores: { q3: s3, q4: s4, q5: s5, q6: s6, q7: s7, q8: s8, q9: s9 },
+        avgPart2: avgP2,
+        avgPart3: avgP3,
+        avgOverall,
+        q10: q10.replace(/^"|"$/g, ''),
+        q11: q11.replace(/^"|"$/g, ''),
+        q12: q12.replace(/^"|"$/g, '')
+      });
+    });
+
+    return results;
+  }
+
+  // 11. Batch save imported records to database
+  public async importBatchRecords(records: SurveyResponse[]): Promise<number> {
+    if (!records || records.length === 0) return 0;
+
+    const isApi = await this.checkApi();
+    if (isApi) {
+      try {
+        const res = await fetch('/api/import-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ records })
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && Array.isArray(json.data)) {
+            saveLocalResponses(json.data);
+            return json.addedCount || records.length;
+          }
+        }
+      } catch (err) {
+        console.warn('API batch import failed, saving locally:', err);
+      }
+    }
+
+    const current = getLocalResponses();
+    const map = new Map<string, SurveyResponse>();
+    records.forEach(r => map.set(r.id, r));
+    current.forEach(c => {
+      if (!map.has(c.id)) map.set(c.id, c);
+    });
+
+    const merged = Array.from(map.values()).sort((a, b) => b.timestamp - a.timestamp);
+    saveLocalResponses(merged);
+    return records.length;
+  }
 }
 
 export const storageService = new StorageService();

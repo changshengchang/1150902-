@@ -172,6 +172,112 @@ async function forwardToGoogleSheetsServerSide(record: ResponseRecord, customUrl
   }
 }
 
+// Read / Pull all responses from Google Sheets Apps Script web app
+async function pullFromGoogleSheetsServerSide(customUrl?: string): Promise<{ success: boolean; data: ResponseRecord[]; newCount: number; message: string }> {
+  const cfg = readCloudConfig();
+  const targetUrl = (customUrl || cfg.googleSheetsWebhookUrl || '').trim();
+
+  if (!targetUrl || !targetUrl.startsWith('http')) {
+    return { success: false, data: readDatabase(), newCount: 0, message: '尚未設定有效的 Google 試算表 Webhook 網址' };
+  }
+
+  try {
+    const fetchUrl = targetUrl.includes('?') ? `${targetUrl}&action=read` : `${targetUrl}?action=read`;
+    console.log(`[Google Sheets Pull] Fetching records from ${fetchUrl}`);
+
+    const res = await fetch(fetchUrl, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(12000)
+    });
+
+    const text = await res.text();
+    let json: any = null;
+    try {
+      json = JSON.parse(text);
+    } catch (parseErr) {
+      console.warn('[Google Sheets Pull Parse Warning] Response was not pure JSON:', text.substring(0, 100));
+    }
+
+    const incomingRecords: ResponseRecord[] = [];
+
+    if (json && Array.isArray(json.data)) {
+      json.data.forEach((r: any, idx: number) => {
+        if (!r.dept && !r.scores && !r.q3) return;
+        const q3 = Number(r.q3 || r.scores?.q3) || 5;
+        const q4 = Number(r.q4 || r.scores?.q4) || 5;
+        const q5 = Number(r.q5 || r.scores?.q5) || 5;
+        const q6 = Number(r.q6 || r.scores?.q6) || 5;
+        const q7 = Number(r.q7 || r.scores?.q7) || 5;
+        const q8 = Number(r.q8 || r.scores?.q8) || 5;
+        const q9 = Number(r.q9 || r.scores?.q9) || 5;
+
+        const avgPart2 = r.avgPart2 ? Number(r.avgPart2) : parseFloat(((q3 + q4 + q5 + q6) / 4).toFixed(2));
+        const avgPart3 = r.avgPart3 ? Number(r.avgPart3) : parseFloat(((q7 + q8 + q9) / 3).toFixed(2));
+        const avgOverall = r.avgOverall ? Number(r.avgOverall) : parseFloat(((q3 + q4 + q5 + q6 + q7 + q8 + q9) / 7).toFixed(2));
+
+        incomingRecords.push({
+          id: r.id || `sheet_${r.time || Date.now()}_${idx}`,
+          timestamp: r.timestamp || (r.time ? new Date(String(r.time).replace(/-/g, '/')).getTime() : Date.now()),
+          time: r.time || '115-09-02 14:00:00',
+          dept: String(r.dept || '未指定課室').trim(),
+          role: r.role || '非主管職員/公務員',
+          gender: r.gender || '未提供',
+          scores: { q3, q4, q5, q6, q7, q8, q9 },
+          avgPart2,
+          avgPart3,
+          avgOverall,
+          q10: r.q10 || '（無特別填寫）',
+          q11: r.q11 || '（無特別填寫）',
+          q12: r.q12 || '（無特別填寫）'
+        });
+      });
+    }
+
+    if (incomingRecords.length === 0) {
+      return { success: true, data: readDatabase(), newCount: 0, message: 'Google 試算表目前尚無新填答資料或已全數同步！' };
+    }
+
+    const currentRecords = readDatabase();
+    const existingIds = new Set(currentRecords.map(r => r.id));
+    let newCount = 0;
+
+    const merged = [...currentRecords];
+
+    incomingRecords.forEach(inRec => {
+      if (!existingIds.has(inRec.id)) {
+        // Also check by time + dept + q10 uniqueness
+        const duplicate = merged.find(m => m.dept === inRec.dept && m.time === inRec.time && m.q10 === inRec.q10);
+        if (!duplicate) {
+          merged.unshift(inRec);
+          existingIds.add(inRec.id);
+          newCount++;
+        }
+      }
+    });
+
+    merged.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    writeDatabase(merged);
+
+    console.log(`[Google Sheets Pull Success] Merged ${incomingRecords.length} records from sheets. New records added: ${newCount}. Total database: ${merged.length}`);
+    return {
+      success: true,
+      data: merged,
+      newCount,
+      message: `✅ 已成功自 Google 試算表同步資料！新增 ${newCount} 筆，目前資料庫共 ${merged.length} 筆問卷。`
+    };
+  } catch (err: any) {
+    console.error('[Google Sheets Pull Error]', err);
+    return {
+      success: false,
+      data: readDatabase(),
+      newCount: 0,
+      message: `同步失敗：${err?.message || '請確認試算表 Apps Script 部署設定'}`
+    };
+  }
+}
+
 interface ResponseRecord {
   id: string;
   timestamp: number;
@@ -401,6 +507,78 @@ app.post('/api/cloud-config', (req, res) => {
   writeCloudConfig(updated);
   console.log('[Cloud Config Updated]', updated);
   res.json({ success: true, config: updated });
+});
+
+// Sync / Pull all responses from Google Sheets to Server Database
+app.all('/api/sync-sheets', async (req, res) => {
+  const customUrl = (req.body?.url || req.query?.url || '').toString();
+  const result = await pullFromGoogleSheetsServerSide(customUrl);
+  return res.json(result);
+});
+
+// Import batch records from CSV/JSON/Pasted data
+app.post('/api/import-batch', (req, res) => {
+  try {
+    const { records } = req.body;
+    if (!Array.isArray(records) || records.length === 0) {
+      return res.status(400).json({ success: false, error: '請提供要匯入的問卷資料陣列' });
+    }
+
+    const currentRecords = readDatabase();
+    const existingIds = new Set(currentRecords.map(r => r.id));
+    let addedCount = 0;
+    const merged = [...currentRecords];
+
+    records.forEach((r: any, idx: number) => {
+      if (!r.dept && !r.scores && !r.q3) return;
+      const q3 = Number(r.q3 || r.scores?.q3) || 5;
+      const q4 = Number(r.q4 || r.scores?.q4) || 5;
+      const q5 = Number(r.q5 || r.scores?.q5) || 5;
+      const q6 = Number(r.q6 || r.scores?.q6) || 5;
+      const q7 = Number(r.q7 || r.scores?.q7) || 5;
+      const q8 = Number(r.q8 || r.scores?.q8) || 5;
+      const q9 = Number(r.q9 || r.scores?.q9) || 5;
+
+      const avgPart2 = r.avgPart2 ? Number(r.avgPart2) : parseFloat(((q3 + q4 + q5 + q6) / 4).toFixed(2));
+      const avgPart3 = r.avgPart3 ? Number(r.avgPart3) : parseFloat(((q7 + q8 + q9) / 3).toFixed(2));
+      const avgOverall = r.avgOverall ? Number(r.avgOverall) : parseFloat(((q3 + q4 + q5 + q6 + q7 + q8 + q9) / 7).toFixed(2));
+
+      const newRec: ResponseRecord = {
+        id: r.id || `import_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`,
+        timestamp: r.timestamp || Date.now(),
+        time: r.time || '115-09-02 14:00:00',
+        dept: String(r.dept || '未指定課室').trim(),
+        role: r.role || '非主管職員/公務員',
+        gender: r.gender || '未提供',
+        scores: { q3, q4, q5, q6, q7, q8, q9 },
+        avgPart2,
+        avgPart3,
+        avgOverall,
+        q10: r.q10 || '（無特別填寫）',
+        q11: r.q11 || '（無特別填寫）',
+        q12: r.q12 || '（無特別填寫）'
+      };
+
+      if (!existingIds.has(newRec.id)) {
+        merged.unshift(newRec);
+        existingIds.add(newRec.id);
+        addedCount++;
+      }
+    });
+
+    merged.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    writeDatabase(merged);
+
+    return res.json({
+      success: true,
+      message: `已成功匯入 ${addedCount} 筆問卷資料至中央資料庫！`,
+      addedCount,
+      totalCount: merged.length,
+      data: merged
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || '匯入失敗' });
+  }
 });
 
 // Test Google Sheets Connection endpoint directly from server

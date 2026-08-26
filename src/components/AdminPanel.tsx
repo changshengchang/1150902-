@@ -68,6 +68,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [cloudConfig, setCloudConfig] = useState<CloudConfig>(getStoredCloudConfig());
   const [sheetsUrl, setSheetsUrl] = useState(cloudConfig.googleSheetsWebhookUrl || '');
   const [copiedScript, setCopiedScript] = useState(false);
+  const [isSyncingSheets, setIsSyncingSheets] = useState(false);
+  const [showPasteModal, setShowPasteModal] = useState(false);
+  const [pastedText, setPastedText] = useState('');
   const [testStatus, setTestStatus] = useState<{ loading: boolean; result: string | null; isSuccess: boolean }>({
     loading: false,
     result: null,
@@ -103,6 +106,42 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleLogout = () => {
     setIsAuthenticated(false);
     setPassword('');
+  };
+
+  // Sync / Pull all responses from Google Sheets
+  const handleSyncFromGoogleSheets = async () => {
+    setIsSyncingSheets(true);
+    try {
+      const res = await storageService.syncFromGoogleSheets(sheetsUrl);
+      showToast(res.message);
+      onRefresh();
+    } catch (err: any) {
+      showToast(`⚠️ 同步失敗：${err?.message || '請確認網路與試算表設定'}`);
+    } finally {
+      setIsSyncingSheets(false);
+    }
+  };
+
+  // Import pasted spreadsheet text
+  const handleImportPastedText = async () => {
+    if (!pastedText.trim()) {
+      showToast('⚠️ 請先貼上 Google 試算表或 Excel 的內容');
+      return;
+    }
+    try {
+      const parsedRecords = storageService.parsePastedSpreadsheetText(pastedText);
+      if (parsedRecords.length === 0) {
+        showToast('⚠️ 未能解析出有效問卷列，請確認複製範圍是否包含服務單位或各題分數');
+        return;
+      }
+      const count = await storageService.importBatchRecords(parsedRecords);
+      onRefresh();
+      setShowPasteModal(false);
+      setPastedText('');
+      showToast(`✅ 成功匯入 ${count} 筆問卷資料至中央資料庫與統計儀表板！`);
+    } catch (err: any) {
+      showToast(`⚠️ 匯入失敗：${err?.message || '格式異常'}`);
+    }
   };
 
   // Generate 5 mock seed responses
@@ -266,7 +305,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // Highly Optimized & Error-Tolerant Google Apps Script Code matching the user's sheet name
   const appsScriptTemplate = `// =========================================================================
-// 苗栗縣三義鄉公所 115年度 EAP研習問卷 Google 試算表自動寫入程式 (最新高相容版)
+// 苗栗縣三義鄉公所 115年度 EAP研習問卷 Google 試算表雙向自動讀寫程式 (最新高相容版)
 // 目標試算表檔案名稱：115年三義鄉公所EAP研習問卷彙整
 // =========================================================================
 
@@ -275,7 +314,59 @@ function doPost(e) {
 }
 
 function doGet(e) {
+  if (e && e.parameter && (e.parameter.action === "read" || e.parameter.getResponses === "1" || (!e.parameter.dept && !e.parameter.q3))) {
+    return readAllSurveyData();
+  }
   return handleSurveyData(e);
+}
+
+// 讀取試算表中所有的填答資料回傳給系統後台
+function readAllSurveyData() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("115年三義鄉公所EAP研習問卷彙整") ||
+              ss.getSheetByName("工作表1") ||
+              ss.getSheetByName("問卷彙整") ||
+              ss.getSheetByName("Sheet1") ||
+              ss.getActiveSheet() ||
+              ss.getSheets()[0];
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow <= 1) {
+    return ContentService.createTextOutput(JSON.stringify({ status: 200, count: 0, data: [] })).setMimeType(ContentService.MimeType.JSON);
+  }
+
+  var range = sheet.getRange(2, 1, lastRow - 1, 18);
+  var values = range.getValues();
+  var records = [];
+
+  for (var i = 0; i < values.length; i++) {
+    var row = values[i];
+    if (!row[0] && !row[2]) continue;
+    records.push({
+      id: String(row[0] || ('sheet_' + i)),
+      time: String(row[1] || ''),
+      dept: String(row[2] || '未指定課室'),
+      role: String(row[3] || '非主管職員/公務員'),
+      gender: String(row[4] || '未提供'),
+      scores: {
+        q3: Number(row[5]) || 5,
+        q4: Number(row[6]) || 5,
+        q5: Number(row[7]) || 5,
+        q6: Number(row[8]) || 5,
+        q7: Number(row[9]) || 5,
+        q8: Number(row[10]) || 5,
+        q9: Number(row[11]) || 5
+      },
+      avgPart2: Number(row[12]) || 5,
+      avgPart3: Number(row[13]) || 5,
+      avgOverall: Number(row[14]) || 5,
+      q10: String(row[15] || '（無特別填寫）'),
+      q11: String(row[16] || '（無特別填寫）'),
+      q12: String(row[17] || '（無特別填寫）')
+    });
+  }
+
+  return ContentService.createTextOutput(JSON.stringify({ status: 200, count: records.length, data: records })).setMimeType(ContentService.MimeType.JSON);
 }
 
 function handleSurveyData(e) {
@@ -301,7 +392,6 @@ function handleSurveyData(e) {
         try {
           data = JSON.parse(e.postData.contents);
         } catch (jsonErr) {
-          // 嘗試解碼 URI 內容
           try {
             data = JSON.parse(decodeURIComponent(e.postData.contents));
           } catch (e2) {}
@@ -613,12 +703,31 @@ function handleSurveyData(e) {
 
             <div className="flex flex-wrap items-center gap-2">
               <button
+                onClick={handleSyncFromGoogleSheets}
+                disabled={isSyncingSheets || actionLoading}
+                className="flex items-center gap-1.5 text-xs bg-emerald-700 hover:bg-emerald-800 text-white px-3.5 py-1.5 rounded-xl font-bold shadow-sm transition disabled:opacity-50"
+                title="立即自 Google 試算表抓取同仁最新填答資料並同步至中央資料庫與統計儀表板"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingSheets ? 'animate-spin' : ''}`} />
+                <span>{isSyncingSheets ? '同步試算表中...' : '🔄 立即從試算表同步'}</span>
+              </button>
+
+              <button
+                onClick={() => setShowPasteModal(true)}
+                className="flex items-center gap-1 text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-800 px-3 py-1.5 rounded-xl border border-emerald-300 font-bold transition"
+                title="直接複製 Google 試算表或 Excel 中的問卷表格貼上匯入"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+                <span>📋 貼上試算表匯入</span>
+              </button>
+
+              <button
                 onClick={handleGenerateSeed}
                 disabled={actionLoading}
                 className="flex items-center gap-1 text-xs bg-stone-100 hover:bg-stone-200 text-stone-800 px-3 py-1.5 rounded-xl border border-stone-300 font-bold transition"
               >
                 <PlusCircle className="w-3.5 h-3.5 text-emerald-700" />
-                <span>➕ 產生 5 筆示範資料</span>
+                <span>➕ 示範 5 筆</span>
               </button>
 
               <button
@@ -1063,6 +1172,74 @@ function handleSurveyData(e) {
                 className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-2 rounded-xl text-xs transition shadow"
               >
                 確認清空全部
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Paste Spreadsheet / Excel Import Modal */}
+      {showPasteModal && (
+        <div className="fixed inset-0 z-50 bg-stone-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full p-6 sm:p-7 space-y-4 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-stone-200 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-emerald-100 text-emerald-800 rounded-xl">
+                  <FileSpreadsheet className="w-5 h-5 text-emerald-700" />
+                </div>
+                <div>
+                  <h3 className="font-black text-stone-900 text-base sm:text-lg">
+                    📋 貼上 Google 試算表 / Excel 資料匯入
+                  </h3>
+                  <p className="text-xs text-stone-500">
+                    直接複製 Google 試算表中的問卷表格列，貼上即可自動解析並寫入資料庫
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowPasteModal(false)}
+                className="p-1.5 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded-lg transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-2 flex-1 overflow-y-auto">
+              <label className="block text-xs font-bold text-stone-700">
+                請在 Google 試算表中選取整列資料複製（Ctrl+C），並在下方欄位貼上（Ctrl+V）：
+              </label>
+              <textarea
+                value={pastedText}
+                onChange={(e) => setPastedText(e.target.value)}
+                placeholder="例如：&#10;resp_1725250000	115-09-02 14:15:30	民政課	非主管職員/公務員	女	5	5	5	5	5	5	5	5.00	5.00	5.00	收穫良多	無	正念減壓..."
+                rows={9}
+                className="w-full bg-stone-50 border border-stone-300 rounded-xl p-3.5 text-xs font-mono text-stone-800 focus:bg-white focus:ring-2 focus:ring-emerald-500 outline-none transition resize-none leading-relaxed"
+              />
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900 leading-relaxed space-y-1">
+                <p className="font-bold flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-700" />
+                  智慧欄位辨識說明：
+                </p>
+                <p className="text-[11px] text-emerald-800">
+                  系統支援直接自試算表全選複製貼上，能自動識別課室名稱、各題分數（1~5分）、心得與建議，自動去重並更新統計分析儀表板！
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-200">
+              <button
+                onClick={() => setShowPasteModal(false)}
+                className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-xl text-xs transition"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleImportPastedText}
+                disabled={!pastedText.trim()}
+                className="px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-xl text-xs transition shadow disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>立即解析並匯入中央資料庫</span>
               </button>
             </div>
           </div>
