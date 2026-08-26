@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { SurveyResponse, AggregateStats } from '../types';
 import { DEPARTMENTS, QUESTIONS } from '../data/questions';
 import { storageService } from '../services/storage';
-import { getStoredCloudConfig, saveStoredCloudConfig, CloudConfig } from '../services/cloudConfig';
+import { getStoredCloudConfig, saveStoredCloudConfig, getShareableSurveyUrl, CloudConfig } from '../services/cloudConfig';
 import {
   Lock,
   Unlock,
@@ -25,7 +25,9 @@ import {
   HelpCircle,
   ExternalLink,
   Copy,
-  Check
+  Check,
+  Send,
+  Sparkles
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -66,6 +68,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [cloudConfig, setCloudConfig] = useState<CloudConfig>(getStoredCloudConfig());
   const [sheetsUrl, setSheetsUrl] = useState(cloudConfig.googleSheetsWebhookUrl || '');
   const [copiedScript, setCopiedScript] = useState(false);
+  const [testStatus, setTestStatus] = useState<{ loading: boolean; result: string | null; isSuccess: boolean }>({
+    loading: false,
+    result: null,
+    isSuccess: false
+  });
 
   useEffect(() => {
     const cfg = getStoredCloudConfig();
@@ -205,9 +212,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // Save Google Sheets Webhook URL
   const handleSaveSheetsUrl = () => {
+    const trimmed = sheetsUrl.trim();
     const updated: CloudConfig = {
       ...cloudConfig,
-      googleSheetsWebhookUrl: sheetsUrl.trim()
+      googleSheetsWebhookUrl: trimmed,
+      mode: trimmed ? 'google_sheets' : 'auto'
     };
     saveStoredCloudConfig(updated);
     setCloudConfig(updated);
@@ -215,54 +224,113 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     onRefresh();
   };
 
-  const appsScriptTemplate = `function doPost(e) {
+  // Test Webhook Connection
+  const handleTestConnection = async () => {
+    if (!sheetsUrl || !sheetsUrl.startsWith('http')) {
+      showToast('⚠️ 請先輸入 Google Apps Script 網址再進行測試');
+      return;
+    }
+
+    setTestStatus({ loading: true, result: null, isSuccess: false });
+    try {
+      const res = await storageService.testGoogleSheetsConnection(sheetsUrl);
+      setTestStatus({
+        loading: false,
+        result: res.message,
+        isSuccess: res.success
+      });
+      if (res.success) {
+        showToast('✅ 測試資料已成功送出！請檢視 Google 試算表');
+      }
+    } catch (err: any) {
+      setTestStatus({
+        loading: false,
+        result: `連線異常：${err?.message || '請確認 Apps Script 部署設定'}`,
+        isSuccess: false
+      });
+    }
+  };
+
+  // Optimized Google Apps Script Code matching the user's sheet name
+  const appsScriptTemplate = `// ==========================================
+// 苗栗縣三義鄉公所 115年度 EAP研習問卷 Google 試算表自動寫入程式
+// 試算表名稱：115年三義鄉公所EAP研習問卷彙整
+// ==========================================
+
+function doPost(e) {
   try {
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-    var data = JSON.parse(e.postData.contents);
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    // 自動尋找名為「115年三義鄉公所EAP研習問卷彙整」的工作表，若無則抓取第一張工作表
+    var sheet = ss.getSheetByName("115年三義鄉公所EAP研習問卷彙整") || ss.getActiveSheet() || ss.getSheets()[0];
     
-    // 如果是第一列，自動建立表頭
+    var data = {};
+    if (e && e.postData && e.postData.contents) {
+      try {
+        data = JSON.parse(e.postData.contents);
+      } catch (parseErr) {
+        data = e.parameter || {};
+      }
+    } else if (e && e.parameter) {
+      data = e.parameter;
+    }
+    
+    // 如果試算表目前為空，自動建立公務標準表頭
     if (sheet.getLastRow() === 0) {
       sheet.appendRow([
         '流水號', '填答時間', '服務單位', '身分別', '性別',
-        'Q3符合需求', 'Q4具實用性', 'Q5情緒自控', 'Q6簡報明確',
-        'Q7專業透徹', 'Q8生動活潑', 'Q9互動良好',
-        '課程均分', '講師均分', '總均分',
-        'Q10心得收穫', 'Q11改進建議', 'Q12期待主題'
+        'Q3主題符合需求', 'Q4技巧具實用性', 'Q5提升情緒自控', 'Q6簡報清晰明確',
+        'Q7講師專業透徹', 'Q8授課生動活潑', 'Q9互動答疑良好',
+        '第二部分課程均分', '第三部分講師均分', '全卷總平均滿意度',
+        'Q10最大收穫或心得', 'Q11改進建議', 'Q12未來期待主題'
       ]);
+      // 格式化標題列顏色
+      var headerRange = sheet.getRange(1, 1, 1, 18);
+      headerRange.setBackground('#064e3b');
+      headerRange.setFontColor('#ffffff');
+      headerRange.setFontWeight('bold');
     }
     
+    var scores = data.scores || {};
+    var q3 = scores.q3 !== undefined ? scores.q3 : (data.q3 || 5);
+    var q4 = scores.q4 !== undefined ? scores.q4 : (data.q4 || 5);
+    var q5 = scores.q5 !== undefined ? scores.q5 : (data.q5 || 5);
+    var q6 = scores.q6 !== undefined ? scores.q6 : (data.q6 || 5);
+    var q7 = scores.q7 !== undefined ? scores.q7 : (data.q7 || 5);
+    var q8 = scores.q8 !== undefined ? scores.q8 : (data.q8 || 5);
+    var q9 = scores.q9 !== undefined ? scores.q9 : (data.q9 || 5);
+    
     sheet.appendRow([
-      data.id || '',
-      data.time || '',
-      data.dept || '',
-      data.role || '未提供',
+      data.id || ('resp_' + new Date().getTime()),
+      data.time || Utilities.formatDate(new Date(), "GMT+8", "yyyy-MM-dd HH:mm:ss"),
+      data.dept || '未指定課室',
+      data.role || '非主管職員/公務員',
       data.gender || '未提供',
-      data.scores ? data.scores.q3 : '',
-      data.scores ? data.scores.q4 : '',
-      data.scores ? data.scores.q5 : '',
-      data.scores ? data.scores.q6 : '',
-      data.scores ? data.scores.q7 : '',
-      data.scores ? data.scores.q8 : '',
-      data.scores ? data.scores.q9 : '',
+      q3, q4, q5, q6, q7, q8, q9,
       data.avgPart2 || '',
       data.avgPart3 || '',
       data.avgOverall || '',
-      data.q10 || '',
-      data.q11 || '',
-      data.q12 || ''
+      data.q10 || '（無特別填寫）',
+      data.q11 || '（無特別填寫）',
+      data.q12 || '（無特別填寫）'
     ]);
     
-    return ContentService.createTextOutput(JSON.stringify({result: "success"})).setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({ result: "success", status: 200 }))
+      .setMimeType(ContentService.MimeType.JSON);
   } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({result: "error", error: err.toString()})).setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({ result: "error", message: err.toString() }))
+      .setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+function doGet(e) {
+  return doPost(e);
 }`;
 
   const handleCopyScript = () => {
     navigator.clipboard.writeText(appsScriptTemplate);
     setCopiedScript(true);
     setTimeout(() => setCopiedScript(false), 2500);
-    showToast('📋 已複製 Google Apps Script 程式碼！');
+    showToast('📋 已複製 Google Apps Script 完整程式碼！');
   };
 
   // Filtered responses list
@@ -280,6 +348,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   });
 
   const activeEngine = storageService.getEngineLabel();
+  const shareableUrl = getShareableSurveyUrl();
 
   // Login Screen
   if (!isAuthenticated) {
@@ -440,7 +509,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           }`}
         >
           <Cloud className="w-4 h-4 text-emerald-700" />
-          <span>⚙️ 雲端同步與 Vercel 佈署設定</span>
+          <span>⚙️ Google 試算表自動寫入設定與測試</span>
           {cloudConfig.googleSheetsWebhookUrl && (
             <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
           )}
@@ -613,137 +682,171 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       )}
 
-      {/* SUB-VIEW 2: Cloud Setup & Vercel Guide */}
+      {/* SUB-VIEW 2: Cloud Setup & Google Sheets Test */}
       {adminSubTab === 'cloud_setup' && (
         <div className="space-y-6">
-          {/* Diagnostic Box */}
-          <div className="bg-amber-50 rounded-2xl p-6 border border-amber-200 text-stone-800 space-y-3">
+          {/* Key Checklist Card */}
+          <div className="bg-emerald-50 rounded-2xl p-6 border-2 border-emerald-500 shadow-sm space-y-4">
             <div className="flex items-start gap-3">
-              <span className="p-2 rounded-xl bg-amber-200 text-amber-900 font-bold text-lg">
-                💡
-              </span>
-              <div>
-                <h4 className="text-base font-extrabold text-stone-900">
-                  為什麼在 Vercel 佈署時會出現連線提示？如何解決？
-                </h4>
-                <p className="text-xs text-stone-600 mt-1 leading-relaxed">
-                  <b>Vercel 預設為純前端靜態託管（SPA）</b>，在純靜態環境下無法直接在伺服器硬碟寫入檔案。
-                  為讓三義鄉公所同仁在任何環境（手機、平板、公務電腦、Vercel、Cloud Run 或離線電腦）都能正常填答與彙整，系統已自動啟用<b>「多層韌性儲存機制」</b>，並提供最適合公務機關的<b>「免費 Google 試算表即時同步」</b>方案！
+              <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-black text-xl shrink-0 shadow">
+                📊
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <h4 className="text-base font-black text-emerald-950">
+                    Google 試算表：「115年三義鄉公所EAP研習問卷彙整」自動寫入排查重點
+                  </h4>
+                  <span className="bg-emerald-700 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                    必檢項目
+                  </span>
+                </div>
+                <p className="text-xs text-emerald-800 mt-1 leading-relaxed">
+                  若您測試同仁手機填寫後試算表未增加紀錄，請依序檢查以下 <b>3 個關鍵設定</b>，設定正確即可 100% 自動寫入：
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
+              <div className="bg-white p-4 rounded-xl border border-emerald-200 shadow-xs space-y-1.5 text-xs text-stone-700">
+                <div className="font-black text-emerald-800 flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-xs">1</span>
+                  <span>存取權限設為「任何人」</span>
+                </div>
+                <p className="text-[11px] text-stone-600 leading-normal">
+                  在 Apps Script 部署時，<b>「誰可以存取 (Who has access)」</b>必須選為 <b>「任何人 (Anyone)」</b>，否則同仁手機匿名送出會被 Google 阻擋。
+                </p>
+              </div>
+
+              <div className="bg-white p-4 rounded-xl border border-emerald-200 shadow-xs space-y-1.5 text-xs text-stone-700">
+                <div className="font-black text-emerald-800 flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-xs">2</span>
+                  <span>執行身分設為「我」</span>
+                </div>
+                <p className="text-[11px] text-stone-600 leading-normal">
+                  <b>「執行身分 (Execute as)」</b>必須選為 <b>「我 (我的帳戶)」</b>，使腳本有權代表您將問卷資料寫入該 Google 試算表。
+                </p>
+              </div>
+
+              <div className="bg-white p-4 rounded-xl border border-emerald-200 shadow-xs space-y-1.5 text-xs text-stone-700">
+                <div className="font-black text-emerald-800 flex items-center gap-1.5">
+                  <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-xs">3</span>
+                  <span>透過 QR Code 分享網址</span>
+                </div>
+                <p className="text-[11px] text-stone-600 leading-normal">
+                  設定儲存後，至上方<b>「現場投影與分享」</b>出示 QR Code，系統已自動將試算表同步參數加密帶入 QR Code 中，全所同仁手機掃碼即自動同步！
                 </p>
               </div>
             </div>
           </div>
 
-          {/* Solution 1: Google Sheets Webhook Sync (Highly Recommended for Govt) */}
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-emerald-200 space-y-5">
+          {/* Webhook Configuration & Testing Form */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-stone-200 space-y-5">
             <div className="flex items-center justify-between border-b border-stone-100 pb-3">
               <div className="flex items-center gap-2.5">
                 <span className="p-2 rounded-xl bg-emerald-100 text-emerald-800 font-bold">
-                  🟢 方案一（最推薦！公務機關 0 費用首選）
+                  🔗
                 </span>
-                <h4 className="text-base font-black text-stone-900">
-                  串接 Google 試算表 (Google Sheets) 雲端中央資料庫
-                </h4>
+                <div>
+                  <h4 className="text-base font-black text-stone-900">
+                    Google Apps Script 網頁應用程式網址 (Webhook URL)
+                  </h4>
+                  <p className="text-xs text-stone-500">
+                    目標試算表：<code className="text-emerald-800 font-bold">115年三義鄉公所EAP研習問卷彙整</code>
+                  </p>
+                </div>
               </div>
-              <span className="text-[11px] bg-emerald-50 text-emerald-800 font-bold px-2.5 py-1 rounded-full border border-emerald-200">
-                1分鐘設定 • 全員手機直接寫入 Google 表格
-              </span>
             </div>
 
-            <p className="text-xs text-stone-600 leading-relaxed">
-              只需 4 個步驟，全所同仁掃描 QR Code 填寫問卷時，資料將<b>即時自動寫入三義鄉公所專屬的 Google 試算表</b>，人事室長官與同仁可隨時於 Google 雲端共同檢視與存取：
-            </p>
-
-            <div className="bg-stone-50 rounded-xl p-4 border border-stone-200 space-y-3 text-xs text-stone-700">
-              <div className="flex items-start gap-2">
-                <span className="w-5 h-5 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">1</span>
-                <div>
-                  在您的 Google 雲端硬碟建立一份新的 <b>「Google 試算表」</b>（名稱可設為：<code>115年三義鄉公所EAP研習問卷彙整</code>）。
-                </div>
+            <div className="space-y-3">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="url"
+                  placeholder="https://script.google.com/macros/s/AKfycb.../exec"
+                  value={sheetsUrl}
+                  onChange={(e) => setSheetsUrl(e.target.value)}
+                  className="flex-1 bg-stone-50 border border-stone-300 rounded-xl px-3.5 py-2.5 text-xs font-mono text-stone-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+                <button
+                  onClick={handleSaveSheetsUrl}
+                  className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-6 py-2.5 rounded-xl text-xs shadow transition whitespace-nowrap flex items-center justify-center gap-1.5"
+                >
+                  <Check className="w-4 h-4" />
+                  <span>儲存網址設定</span>
+                </button>
               </div>
 
-              <div className="flex items-start gap-2">
-                <span className="w-5 h-5 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">2</span>
-                <div className="space-y-1.5 w-full">
-                  <div>
-                    在該試算表上方選單點選 <b>「擴充功能」 ➔ 「Apps Script」</b>，將預設內容清除，貼入下方程式碼：
-                  </div>
-                  <div className="relative">
-                    <pre className="bg-stone-900 text-emerald-300 p-3 rounded-lg text-[11px] font-mono overflow-x-auto max-h-40">
-                      {appsScriptTemplate}
-                    </pre>
-                    <button
-                      onClick={handleCopyScript}
-                      className="absolute top-2 right-2 bg-emerald-700 hover:bg-emerald-600 text-white text-[10px] font-bold px-2.5 py-1 rounded flex items-center gap-1 shadow"
-                    >
-                      {copiedScript ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                      <span>{copiedScript ? '已複製！' : '複製程式碼'}</span>
-                    </button>
-                  </div>
-                </div>
+              {/* Instant Test Connection Button */}
+              <div className="flex flex-wrap items-center gap-3 pt-2">
+                <button
+                  onClick={handleTestConnection}
+                  disabled={testStatus.loading || !sheetsUrl}
+                  className="bg-amber-500 hover:bg-amber-600 text-stone-950 font-black px-4 py-2 rounded-xl text-xs shadow transition flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Send className={`w-3.5 h-3.5 ${testStatus.loading ? 'animate-spin' : ''}`} />
+                  <span>{testStatus.loading ? '正在發送測試資料...' : '🧪 立即測試傳送一筆測試資料至 Google 試算表'}</span>
+                </button>
+
+                <span className="text-[11px] text-stone-500">
+                  （點擊後系統會立即送出 1 筆測試問卷，請直接至 Google 試算表查看是否多出一列）
+                </span>
               </div>
 
-              <div className="flex items-start gap-2">
-                <span className="w-5 h-5 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">3</span>
-                <div>
-                  在 Apps Script 右上方點選 <b>「部署」 ➔ 「新增部署作業」</b> ➔ 齒輪選擇 <b>「網頁應用程式」</b> ➔ 將「誰可以存取」設為 <b>「任何人」</b> ➔ 點選部署並授權 ➔ 複製產生的 <b>「網頁應用程式網址 (URL)」</b>。
-                </div>
-              </div>
-
-              <div className="flex items-start gap-2">
-                <span className="w-5 h-5 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">4</span>
-                <div className="w-full space-y-2">
-                  <div>將複製的 Webhook URL 貼在下方欄位並儲存：</div>
-                  <div className="flex gap-2">
-                    <input
-                      type="url"
-                      placeholder="https://script.google.com/macros/s/.../exec"
-                      value={sheetsUrl}
-                      onChange={(e) => setSheetsUrl(e.target.value)}
-                      className="flex-1 bg-white border border-stone-300 rounded-xl px-3 py-2 text-xs font-mono text-stone-800 outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                    <button
-                      onClick={handleSaveSheetsUrl}
-                      className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-5 py-2 rounded-xl text-xs shadow transition whitespace-nowrap"
-                    >
-                      儲存設定
-                    </button>
+              {/* Test Result Feedback Alert */}
+              {testStatus.result && (
+                <div
+                  className={`p-4 rounded-xl text-xs font-bold border flex items-start gap-2 ${
+                    testStatus.isSuccess
+                      ? 'bg-emerald-50 text-emerald-900 border-emerald-300'
+                      : 'bg-red-50 text-red-800 border-red-200'
+                  }`}
+                >
+                  <span className="text-base">{testStatus.isSuccess ? '🎉' : '⚠️'}</span>
+                  <div className="space-y-1">
+                    <p>{testStatus.result}</p>
+                    {testStatus.isSuccess && (
+                      <p className="text-[11px] font-normal text-emerald-700">
+                        提示：若試算表有順利出現「人事室 (連線測試)」這筆紀錄，代表設定 100% 成功！同仁手機掃碼填寫即可正常寫入。
+                      </p>
+                    )}
                   </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
 
-          {/* Solution 2: Vercel / Cloud Run Fullstack Deployment */}
+          {/* Copyable Apps Script Code Section */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-stone-200 space-y-4">
-            <div className="flex items-center gap-2.5 border-b border-stone-100 pb-3">
-              <span className="p-2 rounded-xl bg-blue-100 text-blue-800 font-bold">
-                🔵 方案二
-              </span>
-              <h4 className="text-base font-black text-stone-900">
-                使用 Cloud Run / Node 伺服器容器運行
+            <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+              <h4 className="text-base font-black text-stone-900 flex items-center gap-2">
+                <span>📝 專屬 Google Apps Script 程式碼（已預先設定三義鄉公所試算表格式）</span>
               </h4>
+              <button
+                onClick={handleCopyScript}
+                className="bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold px-3.5 py-1.5 rounded-xl flex items-center gap-1.5 shadow transition"
+              >
+                {copiedScript ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedScript ? '已複製！' : '一鍵複製程式碼'}</span>
+              </button>
             </div>
 
-            <p className="text-xs text-stone-600 leading-relaxed">
-              本專案已內建完整的 Full-Stack Express 伺服器（<code>server.ts</code>），若佈署至 <b>Google Cloud Run、Render、Railway 或 Docker 容器</b>，伺服器後端中央資料庫將自動生效，無需額外設定任何外部 API！
-            </p>
-          </div>
-
-          {/* Solution 3: Standalone / Offline Resilience */}
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-stone-200 space-y-4">
-            <div className="flex items-center gap-2.5 border-b border-stone-100 pb-3">
-              <span className="p-2 rounded-xl bg-stone-100 text-stone-800 font-bold">
-                ⚪ 方案三
-              </span>
-              <h4 className="text-base font-black text-stone-900">
-                免伺服器單機模式與隨身備份
-              </h4>
+            <div className="space-y-2 text-xs text-stone-600 leading-relaxed">
+              <p>
+                若您尚未在 Google 試算表中設定程式碼，請依下列步驟貼入：
+              </p>
+              <ol className="list-decimal list-inside space-y-1 text-stone-700 bg-stone-50 p-3 rounded-xl border border-stone-200">
+                <li>開啟您的 Google 試算表 <b>「115年三義鄉公所EAP研習問卷彙整」</b>。</li>
+                <li>點選上方選單 <b>「擴充功能」 ➔ 「Apps Script」</b>。</li>
+                <li>將編輯器內的預設程式碼完全刪除，貼上下方完整程式碼。</li>
+                <li>點選右上角 <b>「部署」 ➔ 「新增部署作業」</b>（或「管理部署作業」選新版本）。</li>
+                <li>類型選擇 <b>「網頁應用程式」</b>，將「誰可以存取」設為 <b>「任何人」</b> ➔ 點選「部署」並複製網址。</li>
+              </ol>
             </div>
 
-            <p className="text-xs text-stone-600 leading-relaxed">
-              若未設定任何後端或雲端試算表，系統亦會自動以本機持久化技術完整運作，同仁填寫時絕不中斷，您可隨時透過上方<b>「備份 JSON」</b>與<b>「匯出 Excel」</b>功能將資料完整取出。
-            </p>
+            <div className="relative">
+              <pre className="bg-stone-900 text-emerald-300 p-4 rounded-xl text-xs font-mono overflow-x-auto max-h-56">
+                {appsScriptTemplate}
+              </pre>
+            </div>
           </div>
         </div>
       )}

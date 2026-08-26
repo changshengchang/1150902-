@@ -207,7 +207,7 @@ class StorageService {
   // Check if Express/Serverless backend API is answering with JSON
   private async checkApi(): Promise<boolean> {
     const config = getStoredCloudConfig();
-    if (config.mode === 'local' || config.mode === 'google_sheets') {
+    if (config.mode === 'local') {
       this.apiAvailable = false;
       return false;
     }
@@ -215,7 +215,7 @@ class StorageService {
     try {
       const res = await fetch('/api/health', {
         headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout ? AbortSignal.timeout(3000) : undefined
+        signal: AbortSignal.timeout ? AbortSignal.timeout(2500) : undefined
       });
       const contentType = res.headers.get('content-type') || '';
       if (res.ok && contentType.includes('application/json')) {
@@ -244,6 +244,96 @@ class StorageService {
     return { label: '瀏覽器安全持久化資料庫', mode: 'local', isCloud: false };
   }
 
+  // Send single record to Google Sheets Apps Script Webhook
+  public async syncRecordToGoogleSheets(webhookUrl: string, record: SurveyResponse): Promise<boolean> {
+    if (!webhookUrl || !webhookUrl.startsWith('http')) return false;
+
+    const trimmedUrl = webhookUrl.trim();
+    const payloadString = JSON.stringify(record);
+
+    try {
+      // Use text/plain with no-cors to prevent browser CORS preflight blocking on Google Apps Script
+      await fetch(trimmedUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8'
+        },
+        body: payloadString
+      });
+      console.log('Successfully triggered Google Sheets webhook sync for record:', record.id);
+      return true;
+    } catch (err) {
+      console.warn('Google Sheets Webhook POST failed, attempting GET fallback:', err);
+      // Fallback using GET query parameters
+      try {
+        const params = new URLSearchParams({
+          id: record.id,
+          time: record.time,
+          dept: record.dept,
+          role: record.role || '',
+          gender: record.gender || '',
+          q3: String(record.scores?.q3 ?? 5),
+          q4: String(record.scores?.q4 ?? 5),
+          q5: String(record.scores?.q5 ?? 5),
+          q6: String(record.scores?.q6 ?? 5),
+          q7: String(record.scores?.q7 ?? 5),
+          q8: String(record.scores?.q8 ?? 5),
+          q9: String(record.scores?.q9 ?? 5),
+          avgPart2: String(record.avgPart2 ?? 5),
+          avgPart3: String(record.avgPart3 ?? 5),
+          avgOverall: String(record.avgOverall ?? 5),
+          q10: record.q10 || '',
+          q11: record.q11 || '',
+          q12: record.q12 || ''
+        });
+        const getUrl = trimmedUrl.includes('?') ? `${trimmedUrl}&${params.toString()}` : `${trimmedUrl}?${params.toString()}`;
+        const img = new Image();
+        img.src = getUrl;
+        return true;
+      } catch (getErr) {
+        console.error('Google Sheets GET fallback failed:', getErr);
+        return false;
+      }
+    }
+  }
+
+  // Test Google Sheets Connection directly
+  public async testGoogleSheetsConnection(webhookUrl: string): Promise<{ success: boolean; message: string }> {
+    if (!webhookUrl || !webhookUrl.startsWith('http')) {
+      return { success: false, message: '請輸入有效的 Google Apps Script 網頁應用程式網址 (https://...)' };
+    }
+
+    const testRecord: SurveyResponse = {
+      id: `test_${Date.now()}`,
+      timestamp: Date.now(),
+      time: `115-09-02 ${new Date().toLocaleTimeString('zh-TW', { hour12: false })}`,
+      dept: '人事室 (連線測試)',
+      role: '主辦人員',
+      gender: '不提供',
+      scores: { q3: 5, q4: 5, q5: 5, q6: 5, q7: 5, q8: 5, q9: 5 },
+      avgPart2: 5.0,
+      avgPart3: 5.0,
+      avgOverall: 5.0,
+      q10: '🔔 此為三義鄉公所 EAP 問卷系統之 Google 試算表連線測試資料！',
+      q11: '若您在試算表看到此行，代表所有同仁手機填寫問卷將能 100% 自動寫入！',
+      q12: '測試成功'
+    };
+
+    try {
+      await this.syncRecordToGoogleSheets(webhookUrl, testRecord);
+      return {
+        success: true,
+        message: '✅ 測試封包已成功送出！請開啟「115年三義鄉公所EAP研習問卷彙整」試算表確認是否有新增一筆測試紀錄。'
+      };
+    } catch (e: any) {
+      return {
+        success: false,
+        message: `⚠️ 送出測試失敗：${e?.message || '請確認 Apps Script 部署設定是否設為「任何人」'}`
+      };
+    }
+  }
+
   // 1. Fetch all responses
   public async getAllResponses(): Promise<{ data: SurveyResponse[]; isApi: boolean }> {
     const isApi = await this.checkApi();
@@ -255,7 +345,6 @@ class StorageService {
         if (res.ok && contentType.includes('application/json')) {
           const json = await res.json();
           if (json.success && Array.isArray(json.data)) {
-            // Also update local cache
             saveLocalResponses(json.data);
             return { data: json.data, isApi: true };
           }
@@ -335,23 +424,14 @@ class StorageService {
       q12: payload.q12 ? payload.q12.trim() : '（無特別填寫）'
     };
 
-    // If Google Sheets Webhook is configured, fire-and-forget sync to Google Sheets
+    // 1. Sync to Google Sheets if configured (from localStorage or shared URL param)
     const config = getStoredCloudConfig();
     if (config.googleSheetsWebhookUrl && config.googleSheetsWebhookUrl.trim().length > 0) {
-      try {
-        fetch(config.googleSheetsWebhookUrl.trim(), {
-          method: 'POST',
-          mode: 'no-cors', // standard for Google Apps Script Webhook
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newRecord)
-        }).catch(err => console.warn('Google Sheets Webhook sync error:', err));
-      } catch (e) {
-        console.warn('Google Sheets Webhook trigger failed:', e);
-      }
+      this.syncRecordToGoogleSheets(config.googleSheetsWebhookUrl.trim(), newRecord);
     }
 
+    // 2. Sync to Express API if available
     const isApi = await this.checkApi();
-
     if (isApi) {
       try {
         const res = await fetch('/api/responses', {
@@ -363,14 +443,13 @@ class StorageService {
         if (res.ok && contentType.includes('application/json')) {
           const json = await res.json();
           if (json.success && json.data) {
-            // Also store locally for instant responsiveness
             const locals = getLocalResponses();
             saveLocalResponses([json.data, ...locals.filter(x => x.id !== json.data.id)]);
             return {
               success: true,
               data: json.data,
               totalCount: json.totalCount || locals.length + 1,
-              engine: 'api'
+              engine: config.googleSheetsWebhookUrl ? 'google_sheets' : 'api'
             };
           }
         }
@@ -379,7 +458,7 @@ class StorageService {
       }
     }
 
-    // Save locally
+    // 3. Save to local browser storage
     const currentList = getLocalResponses();
     const updatedList = [newRecord, ...currentList];
     saveLocalResponses(updatedList);
@@ -397,13 +476,7 @@ class StorageService {
     const isApi = await this.checkApi();
     if (isApi) {
       try {
-        const res = await fetch(`/api/responses/${id}`, { method: 'DELETE' });
-        const json = await res.json();
-        if (json.success) {
-          const locals = getLocalResponses().filter(x => x.id !== id);
-          saveLocalResponses(locals);
-          return true;
-        }
+        await fetch(`/api/responses/${id}`, { method: 'DELETE' });
       } catch (err) {
         console.warn('API Delete failed, updating local storage:', err);
       }

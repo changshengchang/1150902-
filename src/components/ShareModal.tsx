@@ -1,14 +1,17 @@
 import React, { useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Copy, Check, ExternalLink, QrCode, Sparkles, Smartphone, Shield } from 'lucide-react';
+import { getShareableSurveyUrl, getStoredCloudConfig } from '../services/cloudConfig';
+import { Copy, Check, ExternalLink, QrCode, Sparkles, Smartphone, Shield, Cloud, AlertCircle } from 'lucide-react';
 
 export const ShareModal: React.FC = () => {
   const [copied, setCopied] = useState(false);
-  const currentUrl = typeof window !== 'undefined' ? window.location.href : 'https://sanyi-eap-survey.app';
+  const shareableUrl = getShareableSurveyUrl();
+  const cloudConfig = getStoredCloudConfig();
+  const hasSheets = Boolean(cloudConfig.googleSheetsWebhookUrl && cloudConfig.googleSheetsWebhookUrl.trim().length > 0);
 
   const handleCopy = () => {
     if (navigator.clipboard) {
-      navigator.clipboard.writeText(currentUrl);
+      navigator.clipboard.writeText(shareableUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
     }
@@ -30,25 +33,37 @@ export const ShareModal: React.FC = () => {
           請與會同仁開啟手機「相機」或「LINE 掃條碼」，對準下方 QR Code 即可免登入立即填答。所有問卷將即時寫入中央統一資料庫！
         </p>
 
+        {/* Sync Status Badge */}
+        {hasSheets ? (
+          <div className="inline-flex items-center gap-1.5 mt-3 px-3 py-1 rounded-full bg-emerald-100/90 text-emerald-900 text-xs font-bold border border-emerald-300">
+            <Cloud className="w-3.5 h-3.5 text-emerald-700" />
+            <span>已連結 Google 試算表：「115年三義鄉公所EAP研習問卷彙整」同步中</span>
+          </div>
+        ) : (
+          <div className="inline-flex items-center gap-1.5 mt-3 px-3 py-1 rounded-full bg-stone-100 text-stone-600 text-xs border border-stone-300">
+            <span>💡 提示：可至「管理後台」設定 Google 試算表同步</span>
+          </div>
+        )}
+
         {/* QR Code Container */}
         <div className="my-8 inline-block p-6 bg-white rounded-3xl border-2 border-emerald-500/30 shadow-xl ring-8 ring-emerald-50/80">
           <QRCodeSVG
-            value={currentUrl}
-            size={220}
-            level="H"
+            value={shareableUrl}
+            size={230}
+            level="M"
             includeMargin={true}
             className="mx-auto rounded-xl"
           />
           <div className="text-[11px] font-mono font-bold text-emerald-800 mt-2">
-            苗栗縣三義鄉公所 115年度 EAP
+            苗栗縣三義鄉公所 115年度 EAP 研習
           </div>
         </div>
 
         {/* Link Copy Bar */}
         <div className="max-w-md mx-auto space-y-3">
           <div className="flex items-center gap-2 bg-stone-50 border border-stone-300 rounded-xl p-2 pl-3">
-            <span className="text-xs text-stone-600 truncate flex-1 font-mono text-left">
-              {currentUrl}
+            <span className="text-xs text-stone-600 truncate flex-1 font-mono text-left" title={shareableUrl}>
+              {shareableUrl}
             </span>
             <button
               id="copy-share-url-btn"
@@ -84,7 +99,7 @@ export const ShareModal: React.FC = () => {
             </span>
             <span className="flex items-center gap-1">
               <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-              <span>即時同步中央資料庫</span>
+              <span>即時同步試算表</span>
             </span>
           </div>
         </div>
