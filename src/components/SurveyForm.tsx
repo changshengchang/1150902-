@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { DEPARTMENTS, QUESTIONS, ROLES } from '../data/questions';
 import { SurveyResponse } from '../types';
-import { CheckCircle2, Send, Sparkles, ShieldCheck, HeartHandshake, RefreshCw, BarChart2 } from 'lucide-react';
+import { storageService } from '../services/storage';
+import { CheckCircle2, Send, Sparkles, ShieldCheck, HeartHandshake, RefreshCw, BarChart2, Database } from 'lucide-react';
 
 interface SurveyFormProps {
   onSuccess: (newRecord: SurveyResponse, totalCount: number) => void;
@@ -85,27 +86,22 @@ export const SurveyForm: React.FC<SurveyFormProps> = ({ onSuccess, onViewAnalyti
         q12: q12.trim() || '（無特別填寫）'
       };
 
-      const res = await fetch('/api/responses', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      const result = await storageService.submitResponse(payload);
 
-      const json = await res.json();
-
-      if (json.success && json.data) {
+      if (result.success && result.data) {
         setSubmittedData({
-          record: json.data,
-          totalCount: json.totalCount
+          record: result.data,
+          totalCount: result.totalCount
         });
-        onSuccess(json.data, json.totalCount);
+        onSuccess(result.data, result.totalCount);
         window.scrollTo({ top: 0, behavior: 'smooth' });
       } else {
-        setErrorMsg(json.error || '問卷提交失敗，請檢查網路後再試');
+        setErrorMsg('問卷提交未能完成，請檢查資料後再試');
       }
     } catch (err) {
       console.error('Submit error:', err);
-      setErrorMsg('連線中央資料庫發生問題，請稍候重試');
+      // Resilient fallback handles saving
+      setErrorMsg('提交處理時發生異常，請重試');
     } finally {
       setIsSubmitting(false);
     }

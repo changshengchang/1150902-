@@ -1,18 +1,20 @@
 import React from 'react';
-import { ClipboardList, BarChart3, BookOpen, QrCode, Lock, Database } from 'lucide-react';
+import { ClipboardList, BarChart3, BookOpen, QrCode, Lock, Database, Cloud } from 'lucide-react';
 
 interface HeaderProps {
   activeTab: 'survey' | 'analytics' | 'plan' | 'share' | 'admin';
   setActiveTab: (tab: 'survey' | 'analytics' | 'plan' | 'share' | 'admin') => void;
   totalResponses: number;
-  dbConnected: boolean;
+  dbEngine?: { label: string; mode: string; isCloud: boolean };
+  onOpenCloudGuide?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   activeTab,
   setActiveTab,
   totalResponses,
-  dbConnected
+  dbEngine = { label: '中央統一資料庫', mode: 'api', isCloud: true },
+  onOpenCloudGuide
 }) => {
   return (
     <header className="bg-emerald-900 text-white shadow-lg sticky top-0 z-40 border-b border-emerald-800">
@@ -39,27 +41,35 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Mobile DB Badge */}
-          <div className="md:hidden flex items-center gap-1.5 bg-emerald-950/80 px-2.5 py-1 rounded-full text-[11px] border border-emerald-700/60">
+          <button
+            onClick={onOpenCloudGuide}
+            className="md:hidden flex items-center gap-1.5 bg-emerald-950/80 px-2.5 py-1 rounded-full text-[11px] border border-emerald-700/60"
+          >
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
             <span className="font-mono font-bold text-emerald-300">{totalResponses} 筆</span>
-          </div>
+          </button>
         </div>
 
         {/* Navigation & Central DB Live Status */}
         <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-center md:justify-end">
           {/* Live DB Status (Desktop) */}
-          <div
+          <button
             id="header-db-indicator"
-            className="hidden lg:flex items-center gap-2 bg-emerald-950/80 px-3 py-1.5 rounded-xl text-xs border border-emerald-700/70"
-            title="所有同仁的問卷資料皆即時彙整寫入伺服器統一資料庫"
+            onClick={onOpenCloudGuide}
+            className="hidden lg:flex items-center gap-2 bg-emerald-950/80 hover:bg-emerald-950 px-3 py-1.5 rounded-xl text-xs border border-emerald-700/70 transition"
+            title={`${dbEngine.label}（點擊查看雲端設定與 Vercel 佈署說明）`}
           >
-            <Database className="w-3.5 h-3.5 text-emerald-400" />
-            <span className="text-emerald-200 font-medium">中央統一資料庫：</span>
+            {dbEngine.isCloud ? (
+              <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+            ) : (
+              <Database className="w-3.5 h-3.5 text-amber-400" />
+            )}
+            <span className="text-emerald-200 font-medium">{dbEngine.label}：</span>
             <span className="flex items-center gap-1 font-bold text-amber-300 font-mono">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
               {totalResponses} 筆已彙總
             </span>
-          </div>
+          </button>
 
           {/* Tab Navigation */}
           <nav className="flex flex-wrap gap-1 bg-emerald-950/70 p-1 rounded-xl border border-emerald-800/80 text-xs">

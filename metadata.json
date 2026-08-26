@@ -1,6 +1,8 @@
 {
-  "name": "三義鄉公所115年度EAP研習問卷與分析系統",
+  "name": "三義鄉公所1150902EAP研習問卷與分析系統",
   "description": "苗栗縣三義鄉公所115年度員工協助方案(EAP)「職場心理健康急救與自我調適」研習課後滿意度調查與統一雲端資料庫彙總分析系統",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

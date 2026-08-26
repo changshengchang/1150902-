@@ -7,6 +7,7 @@ import { ShareModal } from './components/ShareModal';
 import { AdminPanel } from './components/AdminPanel';
 import { ExecutiveReportModal } from './components/ExecutiveReportModal';
 import { SurveyResponse, AggregateStats } from './types';
+import { storageService } from './services/storage';
 import { Shield, PhoneCall, HeartHandshake } from 'lucide-react';
 
 export default function App() {
@@ -14,30 +15,26 @@ export default function App() {
   const [responses, setResponses] = useState<SurveyResponse[]>([]);
   const [stats, setStats] = useState<AggregateStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [dbConnected, setDbConnected] = useState(true);
+  const [dbEngine, setDbEngine] = useState<{ label: string; mode: string; isCloud: boolean }>({
+    label: '伺服器後端中央資料庫',
+    mode: 'api',
+    isCloud: true
+  });
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
 
-  // Fetch all central database records & aggregates
+  // Fetch all database records & aggregates via resilient storage service
   const fetchData = useCallback(async () => {
     try {
-      const [resResponses, resStats] = await Promise.all([
-        fetch('/api/responses'),
-        fetch('/api/stats')
+      const [resData, computedStats] = await Promise.all([
+        storageService.getAllResponses(),
+        storageService.getStats()
       ]);
 
-      if (resResponses.ok && resStats.ok) {
-        const jsonResponses = await resResponses.json();
-        const jsonStats = await resStats.json();
-
-        if (jsonResponses.success && Array.isArray(jsonResponses.data)) {
-          setResponses(jsonResponses.data);
-        }
-        setStats(jsonStats);
-        setDbConnected(true);
-      }
+      setResponses(resData.data);
+      setStats(computedStats);
+      setDbEngine(storageService.getEngineLabel());
     } catch (err) {
-      console.error('Error fetching unified database data:', err);
-      setDbConnected(false);
+      console.error('Error fetching database data:', err);
     } finally {
       setIsLoading(false);
     }
@@ -68,7 +65,8 @@ export default function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         totalResponses={responses.length}
-        dbConnected={dbConnected}
+        dbEngine={dbEngine}
+        onOpenCloudGuide={() => setActiveTab('admin')}
       />
 
       {/* Main Container */}

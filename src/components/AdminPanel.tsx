@@ -1,11 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SurveyResponse, AggregateStats } from '../types';
 import { DEPARTMENTS, QUESTIONS } from '../data/questions';
+import { storageService } from '../services/storage';
+import { getStoredCloudConfig, saveStoredCloudConfig, CloudConfig } from '../services/cloudConfig';
 import {
   Lock,
   Unlock,
   Trash2,
   Download,
+  Upload,
   PlusCircle,
   Eye,
   Search,
@@ -16,7 +19,13 @@ import {
   ShieldCheck,
   RefreshCw,
   LogOut,
-  X
+  X,
+  Settings,
+  Cloud,
+  HelpCircle,
+  ExternalLink,
+  Copy,
+  Check
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -39,6 +48,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
 
+  // Admin active sub-view
+  const [adminSubTab, setAdminSubTab] = useState<'records' | 'cloud_setup'>('records');
+
   // Search & filter state
   const [searchDept, setSearchDept] = useState('all');
   const [searchKeyword, setSearchKeyword] = useState('');
@@ -49,6 +61,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [showClearAllModal, setShowClearAllModal] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Cloud Config State
+  const [cloudConfig, setCloudConfig] = useState<CloudConfig>(getStoredCloudConfig());
+  const [sheetsUrl, setSheetsUrl] = useState(cloudConfig.googleSheetsWebhookUrl || '');
+  const [copiedScript, setCopiedScript] = useState(false);
+
+  useEffect(() => {
+    const cfg = getStoredCloudConfig();
+    setCloudConfig(cfg);
+    setSheetsUrl(cfg.googleSheetsWebhookUrl || '');
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -61,7 +84,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
     if (password === 'nick620504' || password === 'admin888') {
       setIsAuthenticated(true);
-      showToast('✅ 管理員登入成功！已解鎖伺服器中央統一資料庫後台');
+      showToast('✅ 管理員登入成功！已解鎖管理後台與資料庫系統');
     } else {
       setAuthError('解鎖密碼不正確！預設密碼為 nick620504');
     }
@@ -72,18 +95,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setPassword('');
   };
 
-  // Generate 5 mock seed responses on server
+  // Generate 5 mock seed responses
   const handleGenerateSeed = async () => {
     setActionLoading(true);
     try {
-      const res = await fetch('/api/seed', { method: 'POST' });
-      const json = await res.json();
-      if (json.success) {
-        onRefresh();
-        showToast('✅ 已成功自伺服器新增 5 筆示範問卷資料！');
-      }
+      const addedCount = await storageService.seedMockResponses();
+      onRefresh();
+      showToast(`✅ 已成功新增 ${addedCount} 筆示範問卷資料！`);
     } catch (err) {
       console.error('Seed error:', err);
+      showToast('⚠️ 產生示範資料失敗');
     } finally {
       setActionLoading(false);
     }
@@ -94,16 +115,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     if (!deleteTargetId) return;
     setActionLoading(true);
     try {
-      const res = await fetch(`/api/responses/${deleteTargetId}`, { method: 'DELETE' });
-      const json = await res.json();
-      if (json.success) {
-        setDeleteTargetId(null);
-        if (selectedResponse?.id === deleteTargetId) {
-          setSelectedResponse(null);
-        }
-        onRefresh();
-        showToast('🗑️ 已成功從中央資料庫刪除該筆問卷紀錄');
+      await storageService.deleteResponse(deleteTargetId);
+      setDeleteTargetId(null);
+      if (selectedResponse?.id === deleteTargetId) {
+        setSelectedResponse(null);
       }
+      onRefresh();
+      showToast('🗑️ 已成功自資料庫刪除該筆問卷紀錄');
     } catch (err) {
       console.error('Delete error:', err);
     } finally {
@@ -115,13 +133,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleClearAll = async () => {
     setActionLoading(true);
     try {
-      const res = await fetch('/api/responses', { method: 'DELETE' });
-      const json = await res.json();
-      if (json.success) {
-        setShowClearAllModal(false);
-        onRefresh();
-        showToast('🗑️ 已成功清空中央資料庫所有問卷紀錄');
-      }
+      await storageService.clearAllResponses();
+      setShowClearAllModal(false);
+      onRefresh();
+      showToast('🗑️ 已成功清空資料庫所有問卷紀錄');
     } catch (err) {
       console.error('Clear all error:', err);
     } finally {
@@ -129,8 +144,125 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
+  // Export CSV
   const handleExportCSV = () => {
-    window.location.href = '/api/export-csv';
+    try {
+      const csv = storageService.generateCsvContent(responses);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const filename = `苗栗縣三義鄉公所115年度EAP研習問卷彙整_${new Date().toISOString().slice(0, 10)}.csv`;
+      link.setAttribute('href', url);
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showToast('📥 已成功匯出包含 UTF-8 BOM 之 Excel / CSV 檔案');
+    } catch (e) {
+      console.error('Export CSV error:', e);
+      showToast('⚠️ 匯出失敗，請重試');
+    }
+  };
+
+  // Export JSON Backup
+  const handleExportJSON = () => {
+    try {
+      const json = JSON.stringify(responses, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const filename = `sanyi_eap_survey_backup_${new Date().toISOString().slice(0, 10)}.json`;
+      link.setAttribute('href', url);
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showToast('📦 已下載完整 JSON 資料庫備份檔');
+    } catch (e) {
+      console.error('Export JSON error:', e);
+    }
+  };
+
+  // Import JSON Backup
+  const handleImportJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result as string;
+        const count = storageService.importFromJson(text);
+        onRefresh();
+        showToast(`✅ 成功匯入並合併 ${count} 筆問卷資料！`);
+      } catch (err) {
+        showToast('⚠️ JSON 檔案格式錯誤，匯入失敗');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  // Save Google Sheets Webhook URL
+  const handleSaveSheetsUrl = () => {
+    const updated: CloudConfig = {
+      ...cloudConfig,
+      googleSheetsWebhookUrl: sheetsUrl.trim()
+    };
+    saveStoredCloudConfig(updated);
+    setCloudConfig(updated);
+    showToast('💾 已儲存 Google 試算表雲端同步設定！');
+    onRefresh();
+  };
+
+  const appsScriptTemplate = `function doPost(e) {
+  try {
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+    var data = JSON.parse(e.postData.contents);
+    
+    // 如果是第一列，自動建立表頭
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow([
+        '流水號', '填答時間', '服務單位', '身分別', '性別',
+        'Q3符合需求', 'Q4具實用性', 'Q5情緒自控', 'Q6簡報明確',
+        'Q7專業透徹', 'Q8生動活潑', 'Q9互動良好',
+        '課程均分', '講師均分', '總均分',
+        'Q10心得收穫', 'Q11改進建議', 'Q12期待主題'
+      ]);
+    }
+    
+    sheet.appendRow([
+      data.id || '',
+      data.time || '',
+      data.dept || '',
+      data.role || '未提供',
+      data.gender || '未提供',
+      data.scores ? data.scores.q3 : '',
+      data.scores ? data.scores.q4 : '',
+      data.scores ? data.scores.q5 : '',
+      data.scores ? data.scores.q6 : '',
+      data.scores ? data.scores.q7 : '',
+      data.scores ? data.scores.q8 : '',
+      data.scores ? data.scores.q9 : '',
+      data.avgPart2 || '',
+      data.avgPart3 || '',
+      data.avgOverall || '',
+      data.q10 || '',
+      data.q11 || '',
+      data.q12 || ''
+    ]);
+    
+    return ContentService.createTextOutput(JSON.stringify({result: "success"})).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({result: "error", error: err.toString()})).setMimeType(ContentService.MimeType.JSON);
+  }
+}`;
+
+  const handleCopyScript = () => {
+    navigator.clipboard.writeText(appsScriptTemplate);
+    setCopiedScript(true);
+    setTimeout(() => setCopiedScript(false), 2500);
+    showToast('📋 已複製 Google Apps Script 程式碼！');
   };
 
   // Filtered responses list
@@ -147,6 +279,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     );
   });
 
+  const activeEngine = storageService.getEngineLabel();
+
   // Login Screen
   if (!isAuthenticated) {
     return (
@@ -160,7 +294,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             🔐 管理者授權驗證
           </h2>
           <p className="text-xs text-stone-500 mb-6 leading-relaxed">
-            請輸入管理密碼以檢視苗栗縣三義鄉公所中央資料庫明細、維護紀錄與匯出報表
+            請輸入管理密碼以檢視苗栗縣三義鄉公所資料庫明細、維護紀錄與設定雲端同步
           </p>
 
           <form onSubmit={handleLogin} className="space-y-4 text-left">
@@ -203,7 +337,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-bold py-3.5 rounded-xl shadow-md transition text-sm flex items-center justify-center gap-2"
             >
               <Unlock className="w-4 h-4" />
-              <span>驗證並開啟中央資料庫管理後台</span>
+              <span>驗證並開啟管理後台</span>
             </button>
           </form>
 
@@ -236,7 +370,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       <div className="bg-emerald-900 text-white p-5 rounded-2xl shadow-md border border-emerald-800 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-emerald-800 border border-emerald-700 flex items-center justify-center text-lg shadow-inner">
-            🔥
+            🏛️
           </div>
           <div>
             <div className="flex flex-wrap items-center gap-2">
@@ -244,12 +378,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 登入管理員：
                 <span className="font-mono font-bold text-white ml-1">{adminEmail}</span>
               </span>
-              <span className="bg-emerald-950 text-emerald-300 border border-emerald-700 text-[10px] px-2.5 py-0.5 rounded-full font-bold">
-                🟢 伺服器中央統一資料庫連線中
+              <span className="bg-emerald-950 text-emerald-300 border border-emerald-700 text-[10px] px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                {activeEngine.label}
               </span>
             </div>
             <h3 className="text-base sm:text-lg font-black mt-0.5">
-              苗栗縣三義鄉公所 115年度 EAP 問卷中央資料庫管理系統
+              苗栗縣三義鄉公所 115年度 EAP 問卷後台管理系統
             </h3>
           </div>
         </div>
@@ -261,7 +396,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs font-black px-3.5 py-2 rounded-xl shadow transition"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>匯出 Excel / CSV (含 UTF-8 BOM)</span>
+            <span>匯出 Excel / CSV</span>
           </button>
 
           <button
@@ -282,149 +417,336 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       </div>
 
-      {/* Main Table Card */}
-      <div className="bg-white rounded-2xl p-5 sm:p-6 shadow-sm border border-stone-200 space-y-4">
-        {/* Table Top Controls */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-200 pb-4">
-          <div>
-            <h4 className="text-base font-black text-stone-900">
-              📋 全所同仁問卷填答明細列表（中央資料庫即時連線）
-            </h4>
-            <p className="text-xs text-stone-500">
-              目前中央資料庫累積共 <b className="text-emerald-800 font-mono">{responses.length}</b> 筆資料
+      {/* Sub Tab Switcher */}
+      <div className="flex border-b border-stone-200 gap-2">
+        <button
+          onClick={() => setAdminSubTab('records')}
+          className={`pb-3 px-4 font-bold text-sm flex items-center gap-2 border-b-2 transition ${
+            adminSubTab === 'records'
+              ? 'border-emerald-700 text-emerald-800'
+              : 'border-transparent text-stone-500 hover:text-stone-800'
+          }`}
+        >
+          <FileSpreadsheet className="w-4 h-4" />
+          <span>問卷填答紀錄明細 ({responses.length})</span>
+        </button>
+
+        <button
+          onClick={() => setAdminSubTab('cloud_setup')}
+          className={`pb-3 px-4 font-bold text-sm flex items-center gap-2 border-b-2 transition ${
+            adminSubTab === 'cloud_setup'
+              ? 'border-emerald-700 text-emerald-800'
+              : 'border-transparent text-stone-500 hover:text-stone-800'
+          }`}
+        >
+          <Cloud className="w-4 h-4 text-emerald-700" />
+          <span>⚙️ 雲端同步與 Vercel 佈署設定</span>
+          {cloudConfig.googleSheetsWebhookUrl && (
+            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+          )}
+        </button>
+      </div>
+
+      {/* SUB-VIEW 1: Records Table */}
+      {adminSubTab === 'records' && (
+        <div className="bg-white rounded-2xl p-5 sm:p-6 shadow-sm border border-stone-200 space-y-4">
+          {/* Table Top Controls */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-stone-200 pb-4">
+            <div>
+              <h4 className="text-base font-black text-stone-900">
+                📋 全所同仁問卷填答明細列表
+              </h4>
+              <p className="text-xs text-stone-500">
+                目前資料庫累積共 <b className="text-emerald-800 font-mono">{responses.length}</b> 筆資料
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleGenerateSeed}
+                disabled={actionLoading}
+                className="flex items-center gap-1 text-xs bg-stone-100 hover:bg-stone-200 text-stone-800 px-3 py-1.5 rounded-xl border border-stone-300 font-bold transition"
+              >
+                <PlusCircle className="w-3.5 h-3.5 text-emerald-700" />
+                <span>➕ 產生 5 筆示範資料</span>
+              </button>
+
+              <button
+                onClick={handleExportJSON}
+                className="flex items-center gap-1 text-xs bg-stone-100 hover:bg-stone-200 text-stone-700 px-3 py-1.5 rounded-xl border border-stone-300 font-bold transition"
+                title="下載完整的 JSON 備份檔"
+              >
+                <Download className="w-3.5 h-3.5 text-stone-600" />
+                <span>備份 JSON</span>
+              </button>
+
+              <label className="flex items-center gap-1 text-xs bg-stone-100 hover:bg-stone-200 text-stone-700 px-3 py-1.5 rounded-xl border border-stone-300 font-bold transition cursor-pointer">
+                <Upload className="w-3.5 h-3.5 text-stone-600" />
+                <span>匯入 JSON</span>
+                <input
+                  type="file"
+                  accept=".json"
+                  onChange={handleImportJSON}
+                  className="hidden"
+                />
+              </label>
+
+              <button
+                onClick={() => setShowClearAllModal(true)}
+                disabled={actionLoading || responses.length === 0}
+                className="flex items-center gap-1 text-xs bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-xl font-bold shadow transition disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>清空資料庫</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Filters */}
+          <div className="flex flex-wrap items-center gap-3 bg-stone-50 p-3 rounded-xl border border-stone-200 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-stone-700">課室篩選：</span>
+              <select
+                value={searchDept}
+                onChange={(e) => setSearchDept(e.target.value)}
+                className="bg-white border border-stone-300 rounded-lg px-2.5 py-1 text-xs font-semibold text-stone-800 outline-none focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="all">全部課室 ({responses.length})</option>
+                {DEPARTMENTS.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex-1 min-w-[200px] relative">
+              <input
+                type="text"
+                placeholder="搜尋關鍵字（課室、時間、心得建議）..."
+                value={searchKeyword}
+                onChange={(e) => setSearchKeyword(e.target.value)}
+                className="w-full bg-white border border-stone-300 rounded-lg px-3 py-1 text-xs text-stone-800 pl-7 outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <Search className="w-3.5 h-3.5 text-stone-400 absolute left-2 top-2" />
+            </div>
+
+            <button
+              onClick={onRefresh}
+              className="flex items-center gap-1 bg-white hover:bg-stone-100 text-stone-700 px-3 py-1 rounded-lg border border-stone-300 font-semibold"
+            >
+              <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
+              <span>重新整理</span>
+            </button>
+          </div>
+
+          {/* Responsive Table */}
+          <div className="overflow-x-auto rounded-xl border border-stone-200">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="bg-stone-100 text-stone-700 font-bold border-b border-stone-200">
+                  <th className="p-3 w-16 text-center">序號</th>
+                  <th className="p-3 w-36">填答時間</th>
+                  <th className="p-3 w-28">服務單位</th>
+                  <th className="p-3 w-20 text-center">總均分</th>
+                  <th className="p-3 w-28 text-center">課程/講師均分</th>
+                  <th className="p-3">開放式心得與建議摘要</th>
+                  <th className="p-3 w-28 text-center">操作</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-stone-100 text-stone-700">
+                {filtered.length > 0 ? (
+                  filtered.map((r, idx) => (
+                    <tr key={r.id || idx} className="hover:bg-stone-50/80 transition">
+                      <td className="p-3 text-center font-mono font-bold text-stone-500">
+                        #{responses.length - idx}
+                      </td>
+                      <td className="p-3 font-mono text-stone-600">{r.time}</td>
+                      <td className="p-3 font-bold text-stone-900">
+                        <span className="px-2 py-0.5 rounded bg-emerald-100/80 text-emerald-900 text-xs">
+                          {r.dept}
+                        </span>
+                      </td>
+                      <td className="p-3 text-center font-black text-amber-700 font-mono text-sm">
+                        {r.avgOverall}
+                      </td>
+                      <td className="p-3 text-center font-mono text-stone-600">
+                        {r.avgPart2} / {r.avgPart3}
+                      </td>
+                      <td className="p-3 text-stone-600 max-w-xs truncate" title={r.q10}>
+                        {r.q10 && r.q10 !== '（無特別填寫）'
+                          ? r.q10
+                          : r.q11 && r.q11 !== '（無特別填寫）'
+                          ? r.q11
+                          : r.q12 || '（無特別填寫）'}
+                      </td>
+                      <td className="p-3 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            onClick={() => setSelectedResponse(r)}
+                            className="p-1.5 text-emerald-700 hover:bg-emerald-50 rounded-lg transition"
+                            title="查看完整各題分數與意見"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => setDeleteTargetId(r.id)}
+                            className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition"
+                            title="從資料庫刪除此筆"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={7} className="p-8 text-center text-stone-400 text-xs">
+                      目前無符合條件的問卷紀錄
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* SUB-VIEW 2: Cloud Setup & Vercel Guide */}
+      {adminSubTab === 'cloud_setup' && (
+        <div className="space-y-6">
+          {/* Diagnostic Box */}
+          <div className="bg-amber-50 rounded-2xl p-6 border border-amber-200 text-stone-800 space-y-3">
+            <div className="flex items-start gap-3">
+              <span className="p-2 rounded-xl bg-amber-200 text-amber-900 font-bold text-lg">
+                💡
+              </span>
+              <div>
+                <h4 className="text-base font-extrabold text-stone-900">
+                  為什麼在 Vercel 佈署時會出現連線提示？如何解決？
+                </h4>
+                <p className="text-xs text-stone-600 mt-1 leading-relaxed">
+                  <b>Vercel 預設為純前端靜態託管（SPA）</b>，在純靜態環境下無法直接在伺服器硬碟寫入檔案。
+                  為讓三義鄉公所同仁在任何環境（手機、平板、公務電腦、Vercel、Cloud Run 或離線電腦）都能正常填答與彙整，系統已自動啟用<b>「多層韌性儲存機制」</b>，並提供最適合公務機關的<b>「免費 Google 試算表即時同步」</b>方案！
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Solution 1: Google Sheets Webhook Sync (Highly Recommended for Govt) */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-emerald-200 space-y-5">
+            <div className="flex items-center justify-between border-b border-stone-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="p-2 rounded-xl bg-emerald-100 text-emerald-800 font-bold">
+                  🟢 方案一（最推薦！公務機關 0 費用首選）
+                </span>
+                <h4 className="text-base font-black text-stone-900">
+                  串接 Google 試算表 (Google Sheets) 雲端中央資料庫
+                </h4>
+              </div>
+              <span className="text-[11px] bg-emerald-50 text-emerald-800 font-bold px-2.5 py-1 rounded-full border border-emerald-200">
+                1分鐘設定 • 全員手機直接寫入 Google 表格
+              </span>
+            </div>
+
+            <p className="text-xs text-stone-600 leading-relaxed">
+              只需 4 個步驟，全所同仁掃描 QR Code 填寫問卷時，資料將<b>即時自動寫入三義鄉公所專屬的 Google 試算表</b>，人事室長官與同仁可隨時於 Google 雲端共同檢視與存取：
+            </p>
+
+            <div className="bg-stone-50 rounded-xl p-4 border border-stone-200 space-y-3 text-xs text-stone-700">
+              <div className="flex items-start gap-2">
+                <span className="w-5 h-5 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">1</span>
+                <div>
+                  在您的 Google 雲端硬碟建立一份新的 <b>「Google 試算表」</b>（名稱可設為：<code>115年三義鄉公所EAP研習問卷彙整</code>）。
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2">
+                <span className="w-5 h-5 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">2</span>
+                <div className="space-y-1.5 w-full">
+                  <div>
+                    在該試算表上方選單點選 <b>「擴充功能」 ➔ 「Apps Script」</b>，將預設內容清除，貼入下方程式碼：
+                  </div>
+                  <div className="relative">
+                    <pre className="bg-stone-900 text-emerald-300 p-3 rounded-lg text-[11px] font-mono overflow-x-auto max-h-40">
+                      {appsScriptTemplate}
+                    </pre>
+                    <button
+                      onClick={handleCopyScript}
+                      className="absolute top-2 right-2 bg-emerald-700 hover:bg-emerald-600 text-white text-[10px] font-bold px-2.5 py-1 rounded flex items-center gap-1 shadow"
+                    >
+                      {copiedScript ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedScript ? '已複製！' : '複製程式碼'}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2">
+                <span className="w-5 h-5 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">3</span>
+                <div>
+                  在 Apps Script 右上方點選 <b>「部署」 ➔ 「新增部署作業」</b> ➔ 齒輪選擇 <b>「網頁應用程式」</b> ➔ 將「誰可以存取」設為 <b>「任何人」</b> ➔ 點選部署並授權 ➔ 複製產生的 <b>「網頁應用程式網址 (URL)」</b>。
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2">
+                <span className="w-5 h-5 rounded-full bg-emerald-700 text-white font-bold flex items-center justify-center text-[10px] shrink-0 mt-0.5">4</span>
+                <div className="w-full space-y-2">
+                  <div>將複製的 Webhook URL 貼在下方欄位並儲存：</div>
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      placeholder="https://script.google.com/macros/s/.../exec"
+                      value={sheetsUrl}
+                      onChange={(e) => setSheetsUrl(e.target.value)}
+                      className="flex-1 bg-white border border-stone-300 rounded-xl px-3 py-2 text-xs font-mono text-stone-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                    <button
+                      onClick={handleSaveSheetsUrl}
+                      className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-5 py-2 rounded-xl text-xs shadow transition whitespace-nowrap"
+                    >
+                      儲存設定
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Solution 2: Vercel / Cloud Run Fullstack Deployment */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-stone-200 space-y-4">
+            <div className="flex items-center gap-2.5 border-b border-stone-100 pb-3">
+              <span className="p-2 rounded-xl bg-blue-100 text-blue-800 font-bold">
+                🔵 方案二
+              </span>
+              <h4 className="text-base font-black text-stone-900">
+                使用 Cloud Run / Node 伺服器容器運行
+              </h4>
+            </div>
+
+            <p className="text-xs text-stone-600 leading-relaxed">
+              本專案已內建完整的 Full-Stack Express 伺服器（<code>server.ts</code>），若佈署至 <b>Google Cloud Run、Render、Railway 或 Docker 容器</b>，伺服器後端中央資料庫將自動生效，無需額外設定任何外部 API！
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              onClick={handleGenerateSeed}
-              disabled={actionLoading}
-              className="flex items-center gap-1 text-xs bg-stone-100 hover:bg-stone-200 text-stone-800 px-3 py-1.5 rounded-xl border border-stone-300 font-bold transition"
-            >
-              <PlusCircle className="w-3.5 h-3.5 text-emerald-700" />
-              <span>➕ 產生 5 筆測試資料</span>
-            </button>
+          {/* Solution 3: Standalone / Offline Resilience */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-stone-200 space-y-4">
+            <div className="flex items-center gap-2.5 border-b border-stone-100 pb-3">
+              <span className="p-2 rounded-xl bg-stone-100 text-stone-800 font-bold">
+                ⚪ 方案三
+              </span>
+              <h4 className="text-base font-black text-stone-900">
+                免伺服器單機模式與隨身備份
+              </h4>
+            </div>
 
-            <button
-              onClick={() => setShowClearAllModal(true)}
-              disabled={actionLoading || responses.length === 0}
-              className="flex items-center gap-1 text-xs bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-xl font-bold shadow transition disabled:opacity-50"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>清空中央資料庫</span>
-            </button>
+            <p className="text-xs text-stone-600 leading-relaxed">
+              若未設定任何後端或雲端試算表，系統亦會自動以本機持久化技術完整運作，同仁填寫時絕不中斷，您可隨時透過上方<b>「備份 JSON」</b>與<b>「匯出 Excel」</b>功能將資料完整取出。
+            </p>
           </div>
         </div>
-
-        {/* Filters */}
-        <div className="flex flex-wrap items-center gap-3 bg-stone-50 p-3 rounded-xl border border-stone-200 text-xs">
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-stone-700">課室篩選：</span>
-            <select
-              value={searchDept}
-              onChange={(e) => setSearchDept(e.target.value)}
-              className="bg-white border border-stone-300 rounded-lg px-2.5 py-1 text-xs font-semibold text-stone-800 outline-none focus:ring-2 focus:ring-emerald-500"
-            >
-              <option value="all">全部課室 ({responses.length})</option>
-              {DEPARTMENTS.map((d) => (
-                <option key={d} value={d}>
-                  {d}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex-1 min-w-[200px] relative">
-            <input
-              type="text"
-              placeholder="搜尋關鍵字（課室、時間、心得建議）..."
-              value={searchKeyword}
-              onChange={(e) => setSearchKeyword(e.target.value)}
-              className="w-full bg-white border border-stone-300 rounded-lg px-3 py-1 text-xs text-stone-800 pl-7 outline-none focus:ring-2 focus:ring-emerald-500"
-            />
-            <Search className="w-3.5 h-3.5 text-stone-400 absolute left-2 top-2" />
-          </div>
-
-          <button
-            onClick={onRefresh}
-            className="flex items-center gap-1 bg-white hover:bg-stone-100 text-stone-700 px-3 py-1 rounded-lg border border-stone-300 font-semibold"
-          >
-            <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
-            <span>重新整理</span>
-          </button>
-        </div>
-
-        {/* Responsive Table */}
-        <div className="overflow-x-auto rounded-xl border border-stone-200">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="bg-stone-100 text-stone-700 font-bold border-b border-stone-200">
-                <th className="p-3 w-16 text-center">序號</th>
-                <th className="p-3 w-36">填答時間</th>
-                <th className="p-3 w-28">服務單位</th>
-                <th className="p-3 w-20 text-center">總均分</th>
-                <th className="p-3 w-28 text-center">課程/講師均分</th>
-                <th className="p-3">開放式心得與建議摘要</th>
-                <th className="p-3 w-28 text-center">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-stone-100 text-stone-700">
-              {filtered.length > 0 ? (
-                filtered.map((r, idx) => (
-                  <tr key={r.id || idx} className="hover:bg-stone-50/80 transition">
-                    <td className="p-3 text-center font-mono font-bold text-stone-500">
-                      #{responses.length - idx}
-                    </td>
-                    <td className="p-3 font-mono text-stone-600">{r.time}</td>
-                    <td className="p-3 font-bold text-stone-900">
-                      <span className="px-2 py-0.5 rounded bg-emerald-100/80 text-emerald-900 text-xs">
-                        {r.dept}
-                      </span>
-                    </td>
-                    <td className="p-3 text-center font-black text-amber-700 font-mono text-sm">
-                      {r.avgOverall}
-                    </td>
-                    <td className="p-3 text-center font-mono text-stone-600">
-                      {r.avgPart2} / {r.avgPart3}
-                    </td>
-                    <td className="p-3 text-stone-600 max-w-xs truncate" title={r.q10}>
-                      {r.q10 && r.q10 !== '（無特別填寫）'
-                        ? r.q10
-                        : r.q11 && r.q11 !== '（無特別填寫）'
-                        ? r.q11
-                        : r.q12 || '（無特別填寫）'}
-                    </td>
-                    <td className="p-3 text-center">
-                      <div className="flex items-center justify-center gap-1.5">
-                        <button
-                          onClick={() => setSelectedResponse(r)}
-                          className="p-1.5 text-emerald-700 hover:bg-emerald-50 rounded-lg transition"
-                          title="查看完整各題分數與意見"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => setDeleteTargetId(r.id)}
-                          className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition"
-                          title="從中央資料庫刪除此筆"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan={7} className="p-8 text-center text-stone-400 text-xs">
-                    目前無符合條件的問卷紀錄
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      )}
 
       {/* Response Detail Modal */}
       {selectedResponse && (
@@ -512,7 +834,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
             <h3 className="font-bold text-stone-900 text-base">確認刪除此筆問卷？</h3>
             <p className="text-xs text-stone-500 leading-relaxed">
-              此操作將自伺服器中央統一資料庫永久移除該筆紀錄，各項統計均分將即時重新計算。
+              此操作將自資料庫永久移除該筆紀錄，各項統計均分將即時重新計算。
             </p>
             <div className="flex gap-2">
               <button
@@ -540,9 +862,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             <div className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto">
               <AlertTriangle className="w-6 h-6" />
             </div>
-            <h3 className="font-bold text-stone-900 text-base">確定清空中央資料庫？</h3>
+            <h3 className="font-bold text-stone-900 text-base">確定清空資料庫？</h3>
             <p className="text-xs text-stone-500 leading-relaxed">
-              此操作將刪除伺服器現有的全部 <b>{responses.length}</b> 筆問卷資料，無法復原！
+              此操作將刪除現有的全部 <b>{responses.length}</b> 筆問卷資料，無法復原！
             </p>
             <div className="flex gap-2">
               <button
