@@ -41,19 +41,42 @@ export default function App() {
     }
   }, []);
 
-  // Initial load
+  // Initial load & window focus / visibility change auto-refresh
   useEffect(() => {
     initCloudConfigFromServer().catch(() => {});
     fetchData();
+
+    const handleFocus = () => {
+      fetchData();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchData();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [fetchData]);
 
-  // Periodic background refresh every 8 seconds so everyone sees real-time updates
+  // Periodic background refresh every 5 seconds for live real-time auto sync
   useEffect(() => {
     const timer = setInterval(() => {
       fetchData();
-    }, 8000);
+    }, 5000);
     return () => clearInterval(timer);
   }, [fetchData]);
+
+  // Trigger refresh on tab switch
+  useEffect(() => {
+    fetchData();
+  }, [activeTab, fetchData]);
 
   const handleSurveySuccess = (newRecord: SurveyResponse, totalCount: number) => {
     setResponses((prev) => [newRecord, ...prev]);

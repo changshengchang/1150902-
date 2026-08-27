@@ -690,15 +690,22 @@ function handleSurveyData(e) {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={handleSyncFromGoogleSheets}
-                disabled={isSyncingSheets || actionLoading}
-                className="flex items-center gap-1.5 text-xs bg-emerald-700 hover:bg-emerald-800 text-white px-3.5 py-1.5 rounded-xl font-bold shadow-sm transition disabled:opacity-50"
-                title="立即自 Google 試算表抓取同仁最新填答資料並同步至中央資料庫與統計儀表板"
+              <div
+                className="flex items-center gap-1.5 bg-emerald-50 text-emerald-900 border border-emerald-300 px-3 py-1.5 rounded-xl text-xs font-bold shadow-xs"
+                title="系統背景已啟用全自動即時同步：同仁只要在 Google 試算表填報，系統每 5 秒即自動偵測並同步至中央資料庫與統計儀表板，無須人工操作"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingSheets ? 'animate-spin' : ''}`} />
-                <span>{isSyncingSheets ? '同步試算表中...' : '🔄 立即從試算表同步'}</span>
-              </button>
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>🟢 試算表自動同步中</span>
+                <button
+                  onClick={handleSyncFromGoogleSheets}
+                  disabled={isSyncingSheets || actionLoading}
+                  className="ml-1 text-[11px] bg-emerald-700 hover:bg-emerald-800 text-white px-2 py-0.5 rounded-lg font-medium transition disabled:opacity-50 flex items-center gap-1"
+                  title="點擊進行立即強制檢查"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isSyncingSheets ? 'animate-spin' : ''}`} />
+                  <span>{isSyncingSheets ? '同步中...' : '⚡ 立即檢查'}</span>
+                </button>
+              </div>
 
               <button
                 onClick={() => setShowPasteModal(true)}

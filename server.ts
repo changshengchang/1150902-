@@ -278,6 +278,32 @@ async function pullFromGoogleSheetsServerSide(customUrl?: string): Promise<{ suc
   }
 }
 
+// Global Auto-Sync Daemon State
+let lastAutoSyncTimestamp = 0;
+let isSyncInProgress = false;
+
+async function runAutoSyncFromSheets(force = false): Promise<void> {
+  if (isSyncInProgress) return;
+  const now = Date.now();
+  if (!force && now - lastAutoSyncTimestamp < 5000) return; // rate limit: at most once every 5 seconds
+
+  const cfg = readCloudConfig();
+  if (!cfg.googleSheetsWebhookUrl || !cfg.googleSheetsWebhookUrl.startsWith('http')) return;
+
+  isSyncInProgress = true;
+  lastAutoSyncTimestamp = now;
+  try {
+    const res = await pullFromGoogleSheetsServerSide();
+    if (res.newCount > 0) {
+      console.log(`[Google Sheets Auto-Sync] 🟢 自動同步偵測到並匯入 ${res.newCount} 筆新問卷，目前資料庫共 ${res.data.length} 筆！`);
+    }
+  } catch (err) {
+    // transient network error
+  } finally {
+    isSyncInProgress = false;
+  }
+}
+
 interface ResponseRecord {
   id: string;
   timestamp: number;
@@ -409,12 +435,28 @@ app.get('/api/health', (req, res) => {
 });
 
 // 2. Get all responses
-app.get('/api/responses', (req, res) => {
+app.get('/api/responses', async (req, res) => {
+  // Proactively check and sync from Google Sheets if needed
+  await runAutoSyncFromSheets(false);
   const records = readDatabase();
   res.json({
     success: true,
     total: records.length,
+    lastAutoSync: lastAutoSyncTimestamp,
     data: records
+  });
+});
+
+// Auto-Sync Status Endpoint
+app.get('/api/sync-status', (req, res) => {
+  const cfg = readCloudConfig();
+  const records = readDatabase();
+  res.json({
+    enabled: Boolean(cfg.googleSheetsWebhookUrl && cfg.googleSheetsWebhookUrl.startsWith('http')),
+    isSyncInProgress,
+    lastSyncTime: lastAutoSyncTimestamp,
+    totalRecords: records.length,
+    intervalMs: 5000
   });
 });
 
@@ -731,7 +773,9 @@ app.post('/api/seed', (req, res) => {
 });
 
 // 8. Aggregated Statistics
-app.get('/api/stats', (req, res) => {
+app.get('/api/stats', async (req, res) => {
+  // Proactively check and sync from Google Sheets if needed
+  await runAutoSyncFromSheets(false);
   const records = readDatabase();
   const total = records.length;
 
@@ -905,6 +949,12 @@ async function startServer() {
     console.log(`  苗栗縣三義鄉公所 115年度 EAP 研習問卷中央系統`);
     console.log(`  統一資料庫 API 服務已啟動: http://0.0.0.0:${PORT}`);
     console.log(`====================================================`);
+
+    // Start proactive background auto-sync loop with Google Sheets (every 5 seconds)
+    setInterval(() => {
+      runAutoSyncFromSheets(false).catch(() => {});
+    }, 5000);
+    console.log(`[Google Sheets Auto-Sync] Background auto-sync daemon is active (checking every 5 seconds)`);
   });
 }
 

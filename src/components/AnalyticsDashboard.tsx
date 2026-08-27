@@ -65,6 +65,17 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
+  // Proactively auto-sync with Google Sheets upon opening the Analytics Dashboard
+  React.useEffect(() => {
+    storageService.syncFromGoogleSheets()
+      .then((res) => {
+        if (res.newCount > 0) {
+          onRefresh();
+        }
+      })
+      .catch(() => {});
+  }, [onRefresh]);
+
   const handleSyncSheets = async () => {
     setIsSyncing(true);
     try {
@@ -104,8 +115,13 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
         </div>
         <h3 className="text-lg font-black text-stone-800">目前中央統一資料庫尚無問卷填答資料</h3>
         <p className="text-xs text-stone-500 leading-relaxed max-w-md mx-auto">
-          同仁若已在 Google 試算表中填報資料，請點擊下方<b>「從 Google 試算表同步資料」</b>按鈕直接抓取；或可填寫問卷或產生示範數據。
+          系統已啟用 <b>Google 試算表自動同步</b>（每 5 秒即時感應），只要同仁在試算表中填報資料，系統將自動同步並在此呈現圖表；亦可填寫問卷或產生示範數據。
         </p>
+
+        <div className="inline-flex items-center gap-2 bg-emerald-50 text-emerald-900 border border-emerald-300 px-3 py-1.5 rounded-xl text-xs font-bold">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>🟢 背景自動同步監聽中（同仁填報即自動匯入）</span>
+        </div>
 
         {syncMsg && (
           <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold p-3 rounded-xl">
@@ -120,7 +136,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
             className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-700 text-white text-xs font-bold hover:bg-emerald-800 shadow transition disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span>{isSyncing ? '正在自試算表同步中...' : '🔄 從 Google 試算表同步資料'}</span>
+            <span>{isSyncing ? '正在自試算表同步中...' : '⚡ 立即強制檢查試算表'}</span>
           </button>
 
           <button
@@ -174,15 +190,23 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={handleSyncSheets}
-            disabled={isSyncing || isLoading}
-            className="flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold px-3.5 py-2.5 rounded-xl border border-emerald-300 transition"
-            title="從 Google 試算表抓取最新問卷資料"
+          {/* Automatic Sheets Sync Status Badge */}
+          <div
+            className="flex items-center gap-1.5 bg-emerald-50 text-emerald-900 border border-emerald-300 px-3 py-2 rounded-xl text-xs font-bold shadow-xs"
+            title="系統背景已啟用 Google 試算表全自動即時同步：同仁只要在試算表填報，系統每 5 秒自動偵測並同步更新，無須手動啟動"
           >
-            <RefreshCw className={`w-3.5 h-3.5 text-emerald-700 ${isSyncing ? 'animate-spin' : ''}`} />
-            <span>{isSyncing ? '同步中...' : '🔄 同步 Google 試算表'}</span>
-          </button>
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>🟢 試算表自動同步中</span>
+            <button
+              onClick={handleSyncSheets}
+              disabled={isSyncing || isLoading}
+              className="ml-1 text-[11px] bg-emerald-700 hover:bg-emerald-800 text-white px-2 py-0.5 rounded-lg font-medium transition disabled:opacity-50 flex items-center gap-1"
+              title="點擊進行立即強制檢查"
+            >
+              <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>{isSyncing ? '同步中' : '⚡ 檢查'}</span>
+            </button>
+          </div>
 
           <button
             id="refresh-stats-btn"
