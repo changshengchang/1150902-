@@ -46,7 +46,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onOpenReport
 }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [adminEmail, setAdminEmail] = useState('changshengchanggail@gmail.com');
+  const [adminEmail, setAdminEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -99,7 +99,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       setIsAuthenticated(true);
       showToast('✅ 管理員登入成功！已解鎖管理後台與資料庫系統');
     } else {
-      setAuthError('解鎖密碼不正確！預設密碼為 nick620504');
+      setAuthError('解鎖密碼不正確！請重新輸入');
     }
   };
 
@@ -560,7 +560,7 @@ function handleSurveyData(e) {
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="請輸入解鎖密碼 (nick620504)"
+                placeholder="請輸入解鎖密碼"
                 className="w-full bg-stone-50 border border-stone-300 rounded-xl p-3 text-xs sm:text-sm text-stone-800 focus:ring-2 focus:ring-emerald-500 outline-none"
               />
             </div>
@@ -580,18 +580,6 @@ function handleSurveyData(e) {
               <span>驗證並開啟管理後台</span>
             </button>
           </form>
-
-          {/* Quick password filler */}
-          <div className="mt-6 pt-4 border-t border-stone-200 text-xs text-stone-500 flex items-center justify-center gap-2">
-            <span>預設管理密碼：</span>
-            <button
-              type="button"
-              onClick={() => setPassword('nick620504')}
-              className="font-mono font-bold text-emerald-700 underline hover:text-emerald-900"
-            >
-              nick620504 (點此快速帶入)
-            </button>
-          </div>
         </div>
       </div>
     );
@@ -616,7 +604,7 @@ function handleSurveyData(e) {
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-emerald-200">
                 登入管理員：
-                <span className="font-mono font-bold text-white ml-1">{adminEmail}</span>
+                <span className="font-mono font-bold text-white ml-1">{adminEmail || '人事室管理員'}</span>
               </span>
               <span className="bg-emerald-950 text-emerald-300 border border-emerald-700 text-[10px] px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
