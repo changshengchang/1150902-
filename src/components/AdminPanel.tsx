@@ -86,6 +86,32 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     });
   }, []);
 
+  // Proactively auto-sync with Google Sheets upon opening Admin Panel / subTab switch
+  useEffect(() => {
+    if (isAuthenticated) {
+      storageService.syncFromGoogleSheets(sheetsUrl)
+        .then((res) => {
+          if (res.newCount > 0) {
+            onRefresh();
+          }
+        })
+        .catch(() => {});
+
+      // Continuous auto-sync poll while viewing admin panel
+      const interval = setInterval(() => {
+        storageService.syncFromGoogleSheets(sheetsUrl)
+          .then((res) => {
+            if (res.newCount > 0) {
+              onRefresh();
+            }
+          })
+          .catch(() => {});
+      }, 4000);
+
+      return () => clearInterval(interval);
+    }
+  }, [isAuthenticated, adminSubTab, sheetsUrl, onRefresh]);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
@@ -691,20 +717,14 @@ function handleSurveyData(e) {
 
             <div className="flex flex-wrap items-center gap-2">
               <div
-                className="flex items-center gap-1.5 bg-emerald-50 text-emerald-900 border border-emerald-300 px-3 py-1.5 rounded-xl text-xs font-bold shadow-xs"
-                title="系統背景已啟用全自動即時同步：同仁只要在 Google 試算表填報，系統每 5 秒即自動偵測並同步至中央資料庫與統計儀表板，無須人工操作"
+                className="flex items-center gap-2 bg-emerald-50 text-emerald-900 border border-emerald-300 px-3.5 py-1.5 rounded-xl text-xs font-bold shadow-xs"
+                title="系統已啟用全自動即時同步：同仁只要在 Google 試算表填報，系統自動同步抓取並即時呈現在下方列表，無須人工操作"
               >
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>🟢 試算表自動同步中</span>
-                <button
-                  onClick={handleSyncFromGoogleSheets}
-                  disabled={isSyncingSheets || actionLoading}
-                  className="ml-1 text-[11px] bg-emerald-700 hover:bg-emerald-800 text-white px-2 py-0.5 rounded-lg font-medium transition disabled:opacity-50 flex items-center gap-1"
-                  title="點擊進行立即強制檢查"
-                >
-                  <RefreshCw className={`w-3 h-3 ${isSyncingSheets ? 'animate-spin' : ''}`} />
-                  <span>{isSyncingSheets ? '同步中...' : '⚡ 立即檢查'}</span>
-                </button>
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                </span>
+                <span>🟢 與 Google 試算表即時自動同步中</span>
               </div>
 
               <button

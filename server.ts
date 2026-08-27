@@ -285,7 +285,7 @@ let isSyncInProgress = false;
 async function runAutoSyncFromSheets(force = false): Promise<void> {
   if (isSyncInProgress) return;
   const now = Date.now();
-  if (!force && now - lastAutoSyncTimestamp < 5000) return; // rate limit: at most once every 5 seconds
+  if (!force && now - lastAutoSyncTimestamp < 3000) return; // rate limit: at most once every 3 seconds
 
   const cfg = readCloudConfig();
   if (!cfg.googleSheetsWebhookUrl || !cfg.googleSheetsWebhookUrl.startsWith('http')) return;
@@ -950,11 +950,11 @@ async function startServer() {
     console.log(`  統一資料庫 API 服務已啟動: http://0.0.0.0:${PORT}`);
     console.log(`====================================================`);
 
-    // Start proactive background auto-sync loop with Google Sheets (every 5 seconds)
+    // Start proactive background auto-sync loop with Google Sheets (every 3 seconds)
     setInterval(() => {
       runAutoSyncFromSheets(false).catch(() => {});
-    }, 5000);
-    console.log(`[Google Sheets Auto-Sync] Background auto-sync daemon is active (checking every 5 seconds)`);
+    }, 3000);
+    console.log(`[Google Sheets Auto-Sync] Background auto-sync daemon is active (checking every 3 seconds)`);
   });
 }
 
