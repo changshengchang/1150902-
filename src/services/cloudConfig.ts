@@ -3,6 +3,8 @@ export interface CloudConfig {
   googleSheetsWebhookUrl?: string;
 }
 
+export const DEFAULT_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbwubhkbOuQLhOzjsjTnFLv5Bk1LQgvgI2Mic20ySRKkv1BtULrMCUctl_Ks0N15ffTXTQ/exec';
+
 const STORAGE_KEY = 'sanyi_eap_cloud_config_115';
 
 // Listeners for real-time config updates across React components
@@ -41,14 +43,22 @@ function extractUrlParam(): string | null {
 
 export function getStoredCloudConfig(): CloudConfig {
   let config: CloudConfig = {
-    mode: 'auto',
-    googleSheetsWebhookUrl: ''
+    mode: 'google_sheets',
+    googleSheetsWebhookUrl: DEFAULT_WEBHOOK_URL
   };
 
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      config = { ...config, ...JSON.parse(raw) };
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        config = {
+          mode: 'google_sheets',
+          googleSheetsWebhookUrl: (parsed.googleSheetsWebhookUrl && typeof parsed.googleSheetsWebhookUrl === 'string' && parsed.googleSheetsWebhookUrl.trim())
+            ? parsed.googleSheetsWebhookUrl.trim()
+            : DEFAULT_WEBHOOK_URL
+        };
+      }
     }
   } catch (e) {
     console.error('Error reading cloud config from storage:', e);

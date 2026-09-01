@@ -28,6 +28,8 @@ interface CloudConfig {
   googleSheetsWebhookUrl?: string;
 }
 
+const DEFAULT_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbwubhkbOuQLhOzjsjTnFLv5Bk1LQgvgI2Mic20ySRKkv1BtULrMCUctl_Ks0N15ffTXTQ/exec';
+
 // In-memory cache for cloud config
 let cachedCloudConfig: CloudConfig | null = null;
 
@@ -37,8 +39,15 @@ function readCloudConfig(): CloudConfig {
       const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === 'object') {
-        cachedCloudConfig = parsed;
-        return parsed;
+        const url = (parsed.googleSheetsWebhookUrl && typeof parsed.googleSheetsWebhookUrl === 'string' && parsed.googleSheetsWebhookUrl.trim())
+          ? parsed.googleSheetsWebhookUrl.trim()
+          : DEFAULT_WEBHOOK_URL;
+        const config: CloudConfig = {
+          mode: 'google_sheets',
+          googleSheetsWebhookUrl: url
+        };
+        cachedCloudConfig = config;
+        return config;
       }
     }
   } catch (err) {
@@ -48,8 +57,8 @@ function readCloudConfig(): CloudConfig {
     return cachedCloudConfig;
   }
   const fallback: CloudConfig = {
-    mode: 'auto',
-    googleSheetsWebhookUrl: process.env.GOOGLE_SHEETS_WEBHOOK_URL || ''
+    mode: 'google_sheets',
+    googleSheetsWebhookUrl: process.env.GOOGLE_SHEETS_WEBHOOK_URL || DEFAULT_WEBHOOK_URL
   };
   cachedCloudConfig = fallback;
   return fallback;
