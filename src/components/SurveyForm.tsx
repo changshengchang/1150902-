@@ -433,7 +433,7 @@ export const SurveyForm: React.FC<SurveyFormProps> = ({ onSuccess, onViewAnalyti
           <div className="space-y-4">
             <div>
               <label htmlFor="q10-input" className="block text-xs font-bold text-stone-800 mb-1.5">
-                10. 參加這堂課最大的收穫或心得：
+                8. 參加這堂課最大的收穫或心得：
               </label>
               <textarea
                 id="q10-input"
@@ -447,7 +447,7 @@ export const SurveyForm: React.FC<SurveyFormProps> = ({ onSuccess, onViewAnalyti
 
             <div>
               <label htmlFor="q11-input" className="block text-xs font-bold text-stone-800 mb-1.5">
-                11. 對本次研習安排或設施設備之改進建議：
+                9. 對本次研習安排或設施設備之改進建議：
               </label>
               <textarea
                 id="q11-input"
@@ -461,7 +461,7 @@ export const SurveyForm: React.FC<SurveyFormProps> = ({ onSuccess, onViewAnalyti
 
             <div>
               <label htmlFor="q12-input" className="block text-xs font-bold text-stone-800 mb-1.5">
-                12. 未來期待公所舉辦之其他 EAP 主題講座或身心健康活動：
+                10. 未來期待公所舉辦之其他 EAP 主題講座或身心健康活動：
               </label>
               <textarea
                 id="q12-input"

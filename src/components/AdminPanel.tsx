@@ -479,10 +479,10 @@ function handleSurveyData(e) {
     if (sheet.getLastRow() === 0) {
       sheet.appendRow([
         '流水號', '填答時間', '服務單位', '身分別', '性別',
-        'Q3主題符合需求', 'Q4技巧具實用性', 'Q5提升情緒自控', 'Q6簡報清晰明確',
-        'Q7講師專業透徹', 'Q8授課生動活潑', 'Q9互動答疑良好',
+        'Q1主題符合需求', 'Q2技巧具實用性', 'Q3提升情緒自控', 'Q4簡報清晰明確',
+        'Q5講師專業透徹', 'Q6授課生動活潑', 'Q7互動答疑良好',
         '第二部分課程均分', '第三部分講師均分', '全卷總平均滿意度',
-        'Q10最大收穫或心得', 'Q11改進建議', 'Q12未來期待主題'
+        'Q8最大收穫或心得', 'Q9改進建議', 'Q10未來期待主題'
       ]);
       
       var headerRange = sheet.getRange(1, 1, 1, 18);
@@ -1179,15 +1179,15 @@ function handleSurveyData(e) {
                 <div className="font-bold text-stone-900">開放式意見：</div>
                 <div className="space-y-1.5">
                   <div className="bg-stone-50 p-2.5 rounded-xl border border-stone-200">
-                    <span className="font-bold text-emerald-900">Q10 心得收穫：</span>
+                    <span className="font-bold text-emerald-900">Q8 心得收穫：</span>
                     <p className="text-stone-700 mt-0.5">{selectedResponse.q10}</p>
                   </div>
                   <div className="bg-stone-50 p-2.5 rounded-xl border border-stone-200">
-                    <span className="font-bold text-amber-900">Q11 改進建議：</span>
+                    <span className="font-bold text-amber-900">Q9 改進建議：</span>
                     <p className="text-stone-700 mt-0.5">{selectedResponse.q11}</p>
                   </div>
                   <div className="bg-stone-50 p-2.5 rounded-xl border border-stone-200">
-                    <span className="font-bold text-purple-900">Q12 期待主題：</span>
+                    <span className="font-bold text-purple-900">Q10 期待主題：</span>
                     <p className="text-stone-700 mt-0.5">{selectedResponse.q12}</p>
                   </div>
                 </div>

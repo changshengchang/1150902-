@@ -157,13 +157,13 @@ export function computeStatsFromResponses(records: SurveyResponse[]): AggregateS
   });
 
   const questionLabels: Record<string, { label: string; category: string }> = {
-    q3: { label: 'Q3 主題符合需求', category: '課程' },
-    q4: { label: 'Q4 技巧具實用性', category: '課程' },
-    q5: { label: 'Q5 提升情緒自控', category: '課程' },
-    q6: { label: 'Q6 簡報清晰明確', category: '課程' },
-    q7: { label: 'Q7 講師專業透徹', category: '講師' },
-    q8: { label: 'Q8 授課生動活潑', category: '講師' },
-    q9: { label: 'Q9 互動答疑良好', category: '講師' }
+    q3: { label: 'Q1 主題符合需求', category: '課程' },
+    q4: { label: 'Q2 技巧具實用性', category: '課程' },
+    q5: { label: 'Q3 提升情緒自控', category: '課程' },
+    q6: { label: 'Q4 簡報清晰明確', category: '課程' },
+    q7: { label: 'Q5 講師專業透徹', category: '講師' },
+    q8: { label: 'Q6 授課生動活潑', category: '講師' },
+    q9: { label: 'Q7 互動答疑良好', category: '講師' }
   };
 
   const questionAverages = Object.keys(qSums).map(qKey => ({
@@ -643,7 +643,7 @@ class StorageService {
   // 8. Generate CSV with UTF-8 BOM
   public generateCsvContent(records: SurveyResponse[]): string {
     let csv = '\uFEFF';
-    csv += '編號,填答時間,服務單位,身分別,性別,Q3主題符合需求,Q4技巧具實用性,Q5提升情緒自控,Q6簡報清晰明確,Q7講師專業透徹,Q8授課生動活潑,Q9互動答疑良好,第二部分課程均分,第三部分講師均分,全卷總平均滿意度,Q10最大收穫或心得,Q11改進建議,Q12未來期待主題\n';
+    csv += '編號,填答時間,服務單位,身分別,性別,Q1主題符合需求,Q2技巧具實用性,Q3提升情緒自控,Q4簡報清晰明確,Q5講師專業透徹,Q6授課生動活潑,Q7互動答疑良好,第二部分課程均分,第三部分講師均分,全卷總平均滿意度,Q8最大收穫或心得,Q9改進建議,Q10未來期待主題\n';
 
     records.forEach((r, idx) => {
       const escapeCsv = (str: string) => `"${(str || '').replace(/"/g, '""')}"`;

@@ -270,7 +270,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
           <div className="flex items-center justify-between text-stone-500 text-xs font-bold mb-1">
             <span>課程實用性均分</span>
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold">
-              Q3-Q6
+              Q1-Q4
             </span>
           </div>
           <div className="text-2xl sm:text-3xl font-black text-emerald-700 font-mono">
@@ -284,7 +284,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
           <div className="flex items-center justify-between text-stone-500 text-xs font-bold mb-1">
             <span>講師專業授課均分</span>
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-bold">
-              Q7-Q9
+              Q5-Q7
             </span>
           </div>
           <div className="text-2xl sm:text-3xl font-black text-emerald-700 font-mono">
@@ -497,7 +497,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                   feedbackTab === 'q10' ? 'bg-white text-emerald-800 shadow-sm' : 'text-stone-600'
                 }`}
               >
-                Q10 收穫心得
+                Q8 收穫心得
               </button>
               <button
                 onClick={() => setFeedbackTab('q11')}
@@ -505,7 +505,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                   feedbackTab === 'q11' ? 'bg-white text-emerald-800 shadow-sm' : 'text-stone-600'
                 }`}
               >
-                Q11 改進建議
+                Q9 改進建議
               </button>
               <button
                 onClick={() => setFeedbackTab('q12')}
@@ -513,7 +513,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                   feedbackTab === 'q12' ? 'bg-white text-emerald-800 shadow-sm' : 'text-stone-600'
                 }`}
               >
-                Q12 期待主題
+                Q10 期待主題
               </button>
             </div>
 

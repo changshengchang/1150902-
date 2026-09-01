@@ -26,7 +26,7 @@ export const QUESTIONS: QuestionItem[] = [
   {
     id: 'q3',
     part: 2,
-    num: '3',
+    num: '1',
     category: 'course',
     text: '本次講座主題符合我的實際公務壓力與身心照顧需求。',
     shortLabel: '主題符合需求'
@@ -34,7 +34,7 @@ export const QUESTIONS: QuestionItem[] = [
   {
     id: 'q4',
     part: 2,
-    num: '4',
+    num: '2',
     category: 'course',
     text: '課程內容傳授之情緒調適技巧與心理急救觀念具實用性，有助於預防職場過勞耗損。',
     shortLabel: '技巧具實用性'
@@ -42,7 +42,7 @@ export const QUESTIONS: QuestionItem[] = [
   {
     id: 'q5',
     part: 2,
-    num: '5',
+    num: '3',
     category: 'course',
     text: '本課程有助於提升我在面對高壓民眾或繁瑣業務時的情緒調適與自控能力。',
     shortLabel: '提升情緒自控'
@@ -50,7 +50,7 @@ export const QUESTIONS: QuestionItem[] = [
   {
     id: 'q6',
     part: 2,
-    num: '6',
+    num: '4',
     category: 'course',
     text: '課程簡報及內容安排明確清晰，易於理解吸收。',
     shortLabel: '簡報明確清晰'
@@ -58,7 +58,7 @@ export const QUESTIONS: QuestionItem[] = [
   {
     id: 'q7',
     part: 3,
-    num: '7',
+    num: '5',
     category: 'lecturer',
     text: '講師專業知識豐富，對主題剖析深入透徹。',
     shortLabel: '講師專業透徹'
@@ -66,7 +66,7 @@ export const QUESTIONS: QuestionItem[] = [
   {
     id: 'q8',
     part: 3,
-    num: '8',
+    num: '6',
     category: 'lecturer',
     text: '講師授課方式生動活潑、條理分明，能引發學習興趣。',
     shortLabel: '授課生動活潑'
@@ -74,7 +74,7 @@ export const QUESTIONS: QuestionItem[] = [
   {
     id: 'q9',
     part: 3,
-    num: '9',
+    num: '7',
     category: 'lecturer',
     text: '講師能有效解答學員提問（如綜合討論與回饋時間），互動良好。',
     shortLabel: '互動答疑良好'
