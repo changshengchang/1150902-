@@ -32,18 +32,20 @@ interface CloudConfig {
 let cachedCloudConfig: CloudConfig | null = null;
 
 function readCloudConfig(): CloudConfig {
-  if (cachedCloudConfig && cachedCloudConfig.googleSheetsWebhookUrl) {
-    return cachedCloudConfig;
-  }
   try {
     if (fs.existsSync(CONFIG_FILE)) {
       const raw = fs.readFileSync(CONFIG_FILE, 'utf-8');
       const parsed = JSON.parse(raw);
-      cachedCloudConfig = parsed;
-      return parsed;
+      if (parsed && typeof parsed === 'object') {
+        cachedCloudConfig = parsed;
+        return parsed;
+      }
     }
   } catch (err) {
     console.error('Error reading cloud config:', err);
+  }
+  if (cachedCloudConfig) {
+    return cachedCloudConfig;
   }
   const fallback: CloudConfig = {
     mode: 'auto',
@@ -57,7 +59,7 @@ function writeCloudConfig(config: CloudConfig): boolean {
   try {
     cachedCloudConfig = config;
     fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf-8');
-    console.log('[Server Cloud Config Saved]', config);
+    console.log('[Server Central Cloud Config Saved to Disk]', config);
     return true;
   } catch (err) {
     console.error('Error writing cloud config:', err);
@@ -535,19 +537,30 @@ app.post('/api/responses', async (req, res) => {
 // Cloud Config Endpoints
 app.get('/api/cloud-config', (req, res) => {
   const config = readCloudConfig();
-  res.json(config);
+  res.json({
+    success: true,
+    mode: config.mode || 'auto',
+    googleSheetsWebhookUrl: config.googleSheetsWebhookUrl || ''
+  });
 });
 
 app.post('/api/cloud-config', (req, res) => {
   const body = req.body || {};
   const current = readCloudConfig();
+
+  let targetUrl = current.googleSheetsWebhookUrl || '';
+  if (body.clear === true) {
+    targetUrl = '';
+  } else if (typeof body.googleSheetsWebhookUrl === 'string' && body.googleSheetsWebhookUrl.trim().length > 0) {
+    targetUrl = body.googleSheetsWebhookUrl.trim();
+  }
+
   const updated: CloudConfig = {
-    ...current,
-    mode: body.mode || current.mode || 'auto',
-    googleSheetsWebhookUrl: typeof body.googleSheetsWebhookUrl === 'string' ? body.googleSheetsWebhookUrl.trim() : current.googleSheetsWebhookUrl
+    mode: targetUrl ? 'google_sheets' : (body.mode || current.mode || 'auto'),
+    googleSheetsWebhookUrl: targetUrl
   };
   writeCloudConfig(updated);
-  console.log('[Cloud Config Updated]', updated);
+  console.log('[Central Cloud Config Updated on Server]', updated);
   res.json({ success: true, config: updated });
 });
 

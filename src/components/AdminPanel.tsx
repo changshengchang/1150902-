@@ -279,7 +279,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   // Save Google Sheets Webhook URL
-  const handleSaveSheetsUrl = () => {
+  const handleSaveSheetsUrl = async () => {
     const trimmed = sheetsUrl.trim();
     const updated: CloudConfig = {
       ...cloudConfig,
@@ -288,7 +288,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     };
     saveStoredCloudConfig(updated);
     setCloudConfig(updated);
-    showToast('💾 已儲存 Google 試算表雲端同步設定！');
+
+    try {
+      await fetch('/api/cloud-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: trimmed ? 'google_sheets' : 'auto',
+          googleSheetsWebhookUrl: trimmed,
+          clear: !trimmed
+        })
+      });
+      showToast('💾 已永久儲存至中央伺服器！所有電腦、手機開啟後台皆會共用此網址');
+    } catch (e) {
+      showToast('💾 已儲存本機設定');
+    }
     onRefresh();
   };
 
@@ -308,6 +322,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     saveStoredCloudConfig(updated);
     setCloudConfig(updated);
 
+    // Also persist to server immediately
+    fetch('/api/cloud-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'google_sheets',
+        googleSheetsWebhookUrl: trimmed
+      })
+    }).catch(() => {});
+
     setTestStatus({ loading: true, result: null, isSuccess: false });
     try {
       const res = await storageService.testGoogleSheetsConnection(trimmed);
@@ -317,7 +341,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         isSuccess: res.success
       });
       if (res.success) {
-        showToast('✅ 測試資料已成功送出並自動儲存設定！請檢視 Google 試算表');
+        showToast('✅ 測試資料已成功送出並永久綁定中央伺服器！請檢視 Google 試算表');
         onRefresh();
       }
     } catch (err: any) {
@@ -963,6 +987,17 @@ function handleSurveyData(e) {
             </div>
 
             <div className="space-y-3">
+              {cloudConfig.googleSheetsWebhookUrl ? (
+                <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-300 text-emerald-900 px-3.5 py-2 rounded-xl text-xs font-bold">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span>🌐 中央伺服器已共用儲存：任何電腦或手機開啟本系統皆會自動載入此網址</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 bg-amber-50 border border-amber-300 text-amber-900 px-3.5 py-2 rounded-xl text-xs font-bold">
+                  <span>ℹ️ 尚未儲存 Google 試算表 Webhook 網址，請在下方貼上並點擊「儲存網址設定」</span>
+                </div>
+              )}
+
               <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   type="url"

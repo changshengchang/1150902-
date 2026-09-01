@@ -40,8 +40,10 @@ export function getStoredCloudConfig(): CloudConfig {
   if (urlWebhook && urlWebhook !== config.googleSheetsWebhookUrl) {
     config.googleSheetsWebhookUrl = urlWebhook;
     config.mode = 'google_sheets';
-    saveStoredCloudConfig(config);
-    // Also try to push to server if server is running
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    } catch {}
+    // Also push to server if server is running
     pushConfigToServer(config).catch(() => {});
   }
 
@@ -58,16 +60,38 @@ export function saveStoredCloudConfig(config: CloudConfig): void {
   pushConfigToServer(config).catch(() => {});
 }
 
-async function pushConfigToServer(config: CloudConfig): Promise<void> {
+export async function pushConfigToServer(config: CloudConfig): Promise<boolean> {
   try {
-    await fetch('/api/cloud-config', {
+    const res = await fetch('/api/cloud-config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(config)
+      body: JSON.stringify({
+        mode: config.mode || 'google_sheets',
+        googleSheetsWebhookUrl: config.googleSheetsWebhookUrl || '',
+        clear: !config.googleSheetsWebhookUrl
+      })
     });
-  } catch {
-    // Silent catch if server is offline or static SPA
+    return res.ok;
+  } catch (err) {
+    console.warn('[Cloud Config Sync Warning]', err);
+    return false;
   }
+}
+
+// Explicitly save Webhook URL to server and local storage
+export async function saveWebhookUrlDirectly(webhookUrl: string): Promise<boolean> {
+  const trimmed = webhookUrl.trim();
+  const updated: CloudConfig = {
+    mode: trimmed ? 'google_sheets' : 'auto',
+    googleSheetsWebhookUrl: trimmed
+  };
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  } catch {}
+
+  const serverSuccess = await pushConfigToServer(updated);
+  return serverSuccess;
 }
 
 // Automatically fetch latest config from server on startup
@@ -79,7 +103,7 @@ export async function initCloudConfigFromServer(): Promise<CloudConfig> {
     });
     if (res.ok) {
       const serverConfig = await res.json();
-      if (serverConfig && serverConfig.googleSheetsWebhookUrl && serverConfig.googleSheetsWebhookUrl.trim().length > 0) {
+      if (serverConfig && typeof serverConfig.googleSheetsWebhookUrl === 'string' && serverConfig.googleSheetsWebhookUrl.trim().length > 0) {
         const merged: CloudConfig = {
           ...localConfig,
           googleSheetsWebhookUrl: serverConfig.googleSheetsWebhookUrl.trim(),
