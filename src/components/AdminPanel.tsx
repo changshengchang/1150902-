@@ -46,7 +46,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   onOpenReport
 }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [adminEmail, setAdminEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -590,19 +589,6 @@ function handleSurveyData(e) {
           <form onSubmit={handleLogin} className="space-y-4 text-left">
             <div>
               <label className="block text-xs font-bold text-stone-700 mb-1">
-                管理員帳號 (選填)
-              </label>
-              <input
-                type="email"
-                value={adminEmail}
-                onChange={(e) => setAdminEmail(e.target.value)}
-                placeholder="請輸入管理員帳號"
-                className="w-full bg-stone-50 border border-stone-300 rounded-xl p-3 text-xs sm:text-sm text-stone-800 focus:ring-2 focus:ring-emerald-500 outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-stone-700 mb-1">
                 解鎖密碼 (必填)
               </label>
               <input
@@ -653,8 +639,8 @@ function handleSurveyData(e) {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-emerald-200">
-                登入管理員：
-                <span className="font-mono font-bold text-white ml-1">{adminEmail || '人事室管理員'}</span>
+                登入身分：
+                <span className="font-mono font-bold text-white ml-1">三義鄉公所管理員</span>
               </span>
               <span className="bg-emerald-950 text-emerald-300 border border-emerald-700 text-[10px] px-2.5 py-0.5 rounded-full font-bold flex items-center gap-1">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
