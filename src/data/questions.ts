@@ -28,7 +28,7 @@ export const QUESTIONS: QuestionItem[] = [
     part: 2,
     num: '3',
     category: 'course',
-    text: '本次講座主題（職場心理急救與自我調適）符合我的實際公務壓力與身心照顧需求。',
+    text: '本次講座主題符合我的實際公務壓力與身心照顧需求。',
     shortLabel: '主題符合需求'
   },
   {
@@ -60,7 +60,7 @@ export const QUESTIONS: QuestionItem[] = [
     part: 3,
     num: '7',
     category: 'lecturer',
-    text: '講師（張朝翔 職能治療師）專業知識豐富，對主題剖析深入透徹。',
+    text: '講師專業知識豐富，對主題剖析深入透徹。',
     shortLabel: '講師專業透徹'
   },
   {
