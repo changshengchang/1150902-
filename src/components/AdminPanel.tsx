@@ -2,7 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { SurveyResponse, AggregateStats } from '../types';
 import { DEPARTMENTS, QUESTIONS } from '../data/questions';
 import { storageService } from '../services/storage';
-import { getStoredCloudConfig, saveStoredCloudConfig, initCloudConfigFromServer, getShareableSurveyUrl, CloudConfig } from '../services/cloudConfig';
+import {
+  getStoredCloudConfig,
+  saveStoredCloudConfig,
+  saveWebhookUrlDirectly,
+  clearWebhookUrlOnServer,
+  initCloudConfigFromServer,
+  subscribeCloudConfig,
+  getShareableSurveyUrl,
+  CloudConfig
+} from '../services/cloudConfig';
 import {
   Lock,
   Unlock,
@@ -77,18 +86,42 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   });
 
   useEffect(() => {
+    // Initial fetch from server
     initCloudConfigFromServer().then(cfg => {
       setCloudConfig(cfg);
       if (cfg.googleSheetsWebhookUrl) {
         setSheetsUrl(cfg.googleSheetsWebhookUrl);
       }
     });
+
+    // Subscribe to any cloud config changes (e.g. from server or other tabs)
+    const unsubscribe = subscribeCloudConfig((cfg) => {
+      setCloudConfig(cfg);
+      if (cfg.googleSheetsWebhookUrl) {
+        setSheetsUrl(cfg.googleSheetsWebhookUrl);
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
+
+  // Re-fetch latest server config when user authenticates or switches subTab
+  useEffect(() => {
+    if (isAuthenticated) {
+      initCloudConfigFromServer().then(cfg => {
+        setCloudConfig(cfg);
+        if (cfg.googleSheetsWebhookUrl) {
+          setSheetsUrl(cfg.googleSheetsWebhookUrl);
+        }
+      });
+    }
+  }, [isAuthenticated, adminSubTab]);
 
   // Proactively auto-sync with Google Sheets upon opening Admin Panel / subTab switch
   useEffect(() => {
     if (isAuthenticated) {
-      storageService.syncFromGoogleSheets(sheetsUrl)
+      const activeUrl = sheetsUrl || cloudConfig.googleSheetsWebhookUrl;
+      storageService.syncFromGoogleSheets(activeUrl)
         .then((res) => {
           if (res.newCount > 0) {
             onRefresh();
@@ -98,7 +131,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
       // Continuous auto-sync poll while viewing admin panel
       const interval = setInterval(() => {
-        storageService.syncFromGoogleSheets(sheetsUrl)
+        const currentUrl = sheetsUrl || cloudConfig.googleSheetsWebhookUrl;
+        storageService.syncFromGoogleSheets(currentUrl)
           .then((res) => {
             if (res.newCount > 0) {
               onRefresh();
@@ -109,7 +143,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
       return () => clearInterval(interval);
     }
-  }, [isAuthenticated, adminSubTab, sheetsUrl, onRefresh]);
+  }, [isAuthenticated, adminSubTab, sheetsUrl, cloudConfig.googleSheetsWebhookUrl, onRefresh]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -280,29 +314,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Save Google Sheets Webhook URL
   const handleSaveSheetsUrl = async () => {
     const trimmed = sheetsUrl.trim();
-    const updated: CloudConfig = {
-      ...cloudConfig,
-      googleSheetsWebhookUrl: trimmed,
-      mode: trimmed ? 'google_sheets' : 'auto'
-    };
-    saveStoredCloudConfig(updated);
-    setCloudConfig(updated);
-
-    try {
-      await fetch('/api/cloud-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode: trimmed ? 'google_sheets' : 'auto',
-          googleSheetsWebhookUrl: trimmed,
-          clear: !trimmed
-        })
-      });
-      showToast('💾 已永久儲存至中央伺服器！所有電腦、手機開啟後台皆會共用此網址');
-    } catch (e) {
-      showToast('💾 已儲存本機設定');
+    if (!trimmed) {
+      showToast('⚠️ 請輸入有效的 Google Apps Script 網址');
+      return;
+    }
+    const success = await saveWebhookUrlDirectly(trimmed);
+    if (success) {
+      showToast('💾 已永久儲存至中央伺服器！所有電腦、手機開啟本系統皆會自動共用此網址');
+    } else {
+      showToast('💾 已儲存網址設定');
     }
     onRefresh();
+  };
+
+  // Explicitly clear Webhook URL from server & local storage
+  const handleClearSheetsUrl = async () => {
+    if (window.confirm('確定要清除中央伺服器已儲存的 Google 試算表 Webhook 網址嗎？')) {
+      await clearWebhookUrlOnServer();
+      setSheetsUrl('');
+      showToast('🗑️ 已自中央伺服器清除 Webhook 網址');
+      onRefresh();
+    }
   };
 
   // Test Webhook Connection
@@ -313,23 +345,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
 
     const trimmed = sheetsUrl.trim();
-    const updated: CloudConfig = {
-      ...cloudConfig,
-      googleSheetsWebhookUrl: trimmed,
-      mode: 'google_sheets'
-    };
-    saveStoredCloudConfig(updated);
-    setCloudConfig(updated);
-
-    // Also persist to server immediately
-    fetch('/api/cloud-config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        mode: 'google_sheets',
-        googleSheetsWebhookUrl: trimmed
-      })
-    }).catch(() => {});
+    await saveWebhookUrlDirectly(trimmed);
 
     setTestStatus({ loading: true, result: null, isSuccess: false });
     try {
@@ -738,6 +754,28 @@ function handleSurveyData(e) {
               </div>
 
               <button
+                onClick={async () => {
+                  setIsSyncingSheets(true);
+                  try {
+                    const res = await storageService.syncFromGoogleSheets(sheetsUrl || cloudConfig.googleSheetsWebhookUrl);
+                    onRefresh();
+                    showToast(res.message || '✅ 已完成中央資料庫與 Google 試算表最新資料同步！');
+                  } catch (e) {
+                    onRefresh();
+                    showToast('🔄 已重整中央資料庫！');
+                  } finally {
+                    setIsSyncingSheets(false);
+                  }
+                }}
+                disabled={isSyncingSheets}
+                className="flex items-center gap-1.5 text-xs bg-emerald-700 hover:bg-emerald-800 text-white px-3.5 py-1.5 rounded-xl font-bold shadow-sm transition disabled:opacity-50"
+                title="立即向中央伺服器與 Google 試算表抓取最新填答資料"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingSheets ? 'animate-spin' : ''}`} />
+                <span>{isSyncingSheets ? '正在同步...' : '🔄 立即同步'}</span>
+              </button>
+
+              <button
                 onClick={() => setShowPasteModal(true)}
                 className="flex items-center gap-1 text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-800 px-3 py-1.5 rounded-xl border border-emerald-300 font-bold transition"
                 title="直接複製 Google 試算表或 Excel 中的問卷表格貼上匯入"
@@ -992,13 +1030,25 @@ function handleSurveyData(e) {
                   onChange={(e) => setSheetsUrl(e.target.value)}
                   className="flex-1 bg-stone-50 border border-stone-300 rounded-xl px-3.5 py-2.5 text-xs font-mono text-stone-800 outline-none focus:ring-2 focus:ring-emerald-500"
                 />
-                <button
-                  onClick={handleSaveSheetsUrl}
-                  className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-6 py-2.5 rounded-xl text-xs shadow transition whitespace-nowrap flex items-center justify-center gap-1.5"
-                >
-                  <Check className="w-4 h-4" />
-                  <span>儲存網址設定</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleSaveSheetsUrl}
+                    className="bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-6 py-2.5 rounded-xl text-xs shadow transition whitespace-nowrap flex items-center justify-center gap-1.5"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>儲存網址設定</span>
+                  </button>
+                  {cloudConfig.googleSheetsWebhookUrl && (
+                    <button
+                      onClick={handleClearSheetsUrl}
+                      className="bg-stone-200 hover:bg-red-100 hover:text-red-700 text-stone-700 font-bold px-4 py-2.5 rounded-xl text-xs transition whitespace-nowrap flex items-center justify-center gap-1"
+                      title="清除中央伺服器儲存的網址"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>清除網址</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Instant Test Connection Button */}

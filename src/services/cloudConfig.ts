@@ -5,7 +5,26 @@ export interface CloudConfig {
 
 const STORAGE_KEY = 'sanyi_eap_cloud_config_115';
 
-// Check if URL contains query parameter on initial load
+// Listeners for real-time config updates across React components
+type ConfigListener = (config: CloudConfig) => void;
+const configListeners = new Set<ConfigListener>();
+
+export function subscribeCloudConfig(listener: ConfigListener): () => void {
+  configListeners.add(listener);
+  return () => configListeners.delete(listener);
+}
+
+function notifyConfigListeners(config: CloudConfig) {
+  configListeners.forEach(listener => {
+    try {
+      listener(config);
+    } catch (e) {
+      console.error('Error notifying config listener:', e);
+    }
+  });
+}
+
+// Check if URL contains query parameter on initial load (e.g. from QR code)
 function extractUrlParam(): string | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -43,7 +62,7 @@ export function getStoredCloudConfig(): CloudConfig {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
     } catch {}
-    // Also push to server if server is running
+    // Explicitly push non-empty URL to server
     pushConfigToServer(config).catch(() => {});
   }
 
@@ -56,19 +75,26 @@ export function saveStoredCloudConfig(config: CloudConfig): void {
   } catch (e) {
     console.error('Error saving cloud config:', e);
   }
-  // Sync to server backend
-  pushConfigToServer(config).catch(() => {});
+  notifyConfigListeners(config);
+  // Only push to server if we have an actual valid non-empty URL
+  if (config.googleSheetsWebhookUrl && config.googleSheetsWebhookUrl.trim().startsWith('http')) {
+    pushConfigToServer(config).catch(() => {});
+  }
 }
 
 export async function pushConfigToServer(config: CloudConfig): Promise<boolean> {
+  // Never push empty url unless explicitly intended via clearWebhookUrlOnServer
+  if (!config.googleSheetsWebhookUrl || !config.googleSheetsWebhookUrl.trim().startsWith('http')) {
+    return false;
+  }
+
   try {
     const res = await fetch('/api/cloud-config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        mode: config.mode || 'google_sheets',
-        googleSheetsWebhookUrl: config.googleSheetsWebhookUrl || '',
-        clear: !config.googleSheetsWebhookUrl
+        mode: 'google_sheets',
+        googleSheetsWebhookUrl: config.googleSheetsWebhookUrl.trim()
       })
     });
     return res.ok;
@@ -90,11 +116,54 @@ export async function saveWebhookUrlDirectly(webhookUrl: string): Promise<boolea
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   } catch {}
 
-  const serverSuccess = await pushConfigToServer(updated);
-  return serverSuccess;
+  notifyConfigListeners(updated);
+
+  try {
+    const res = await fetch('/api/cloud-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: trimmed ? 'google_sheets' : 'auto',
+        googleSheetsWebhookUrl: trimmed,
+        explicitClear: !trimmed
+      })
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
-// Automatically fetch latest config from server on startup
+// Explicitly clear Webhook URL from server and local storage
+export async function clearWebhookUrlOnServer(): Promise<boolean> {
+  const cleared: CloudConfig = {
+    mode: 'auto',
+    googleSheetsWebhookUrl: ''
+  };
+
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(cleared));
+  } catch {}
+
+  notifyConfigListeners(cleared);
+
+  try {
+    const res = await fetch('/api/cloud-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'auto',
+        googleSheetsWebhookUrl: '',
+        explicitClear: true
+      })
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// Automatically fetch latest config from central server on startup
 export async function initCloudConfigFromServer(): Promise<CloudConfig> {
   const localConfig = getStoredCloudConfig();
   try {
@@ -105,13 +174,13 @@ export async function initCloudConfigFromServer(): Promise<CloudConfig> {
       const serverConfig = await res.json();
       if (serverConfig && typeof serverConfig.googleSheetsWebhookUrl === 'string' && serverConfig.googleSheetsWebhookUrl.trim().length > 0) {
         const merged: CloudConfig = {
-          ...localConfig,
-          googleSheetsWebhookUrl: serverConfig.googleSheetsWebhookUrl.trim(),
-          mode: 'google_sheets'
+          mode: 'google_sheets',
+          googleSheetsWebhookUrl: serverConfig.googleSheetsWebhookUrl.trim()
         };
         try {
           localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
         } catch {}
+        notifyConfigListeners(merged);
         return merged;
       }
     }
@@ -128,7 +197,7 @@ if (typeof window !== 'undefined') {
 
 // Generate a shareable URL that embeds the Webhook for colleagues' phones
 export function getShareableSurveyUrl(): string {
-  if (typeof window === 'undefined') return 'https://sanyi-eap-survey.app';
+  if (typeof window === 'undefined') return '';
   
   const currentOrigin = window.location.origin;
   const currentPath = window.location.pathname;

@@ -27,17 +27,17 @@ function getInitialLocalMockData(): SurveyResponse[] {
   ];
 
   const list: SurveyResponse[] = [];
-  const baseTime = Date.now() - 3600 * 1000 * 2;
+  const baseTime = 1756800000000; // Fixed baseline timestamp for cross-device consistency
 
   for (let i = 0; i < 8; i++) {
     const dept = depts[i % depts.length];
-    const q3 = Math.min(5, Math.floor(Math.random() * 2) + 4);
-    const q4 = Math.min(5, Math.floor(Math.random() * 2) + 4);
-    const q5 = Math.min(5, Math.floor(Math.random() * 2) + 4);
+    const q3 = (i % 2 === 0) ? 5 : 4;
+    const q4 = 5;
+    const q5 = (i % 3 === 0) ? 4 : 5;
     const q6 = 5;
     const q7 = 5;
-    const q8 = Math.min(5, Math.floor(Math.random() * 2) + 4);
-    const q9 = Math.min(5, Math.floor(Math.random() * 2) + 4);
+    const q8 = (i % 2 === 0) ? 5 : 4;
+    const q9 = 5;
 
     const avgP2 = parseFloat(((q3 + q4 + q5 + q6) / 4).toFixed(2));
     const avgP3 = parseFloat(((q7 + q8 + q9) / 3).toFixed(2));
@@ -47,7 +47,7 @@ function getInitialLocalMockData(): SurveyResponse[] {
     const timeStr = `115-09-02 ${String(dateObj.getHours()).padStart(2, '0')}:${String(dateObj.getMinutes()).padStart(2, '0')}:${String(dateObj.getSeconds()).padStart(2, '0')}`;
 
     list.push({
-      id: `resp_${Date.now() - (8 - i) * 100000}_${Math.random().toString(36).substring(2, 6)}`,
+      id: `resp_demo_1150902_${i + 1}`,
       timestamp: baseTime + i * 420000,
       time: timeStr,
       dept: dept,
